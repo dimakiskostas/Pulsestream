@@ -1,7 +1,7 @@
 [project]
 name = "pulsestream"
 version = "0.1.0"
-description = "Add your description here"
+description = "A near-real-time event analytics pipeline with embedded anomaly detection featuring modern Python tooling (DuckDB, FastAPI, uv) and full CI/CD deployment."
 readme = "README.md"
 authors = [
     { name = "dimakiskostas", email = "costasdhm2002@gmail.com" }
@@ -35,3 +35,27 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.16.1",
 ]
+
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",  # All errors
+    "F",  # All pyflakes codes
+    "I",  # All import-related codes
+    "UP", # All unused codes
+    "B"
+]
+
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--cov=pulsestream --cov-report=term-missing"
+
+

@@ -1,5 +1,4 @@
 import json
-import random
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,17 +14,18 @@ def _raw(payload: dict[str, Any]) -> RawEvent:
     )
 
 
-def create_payload() -> dict[str, Any]:
-    return {
+def create_payload(**kwargs) -> dict[str, Any]:
+    base = {
         "type": "edit",
-        "meta": {"id": str(random.randint(1, 1000))},
-        "timestamp": datetime.now(UTC).isoformat(),
+        "meta": {"id": "e49b3bf0-04d9-4104-877f-64cbc2e5e9d9"},
+        "timestamp": 1786622924,
         "wiki": "test_entity",
-        "length": random.choice([{"new": 100, "old": 50}, {"new": 50, "old": 100}]),
-        "bot": random.choice([True, False]),
+        "length": {"old": 3359, "new": 3409},
+        "bot": False,
         "title": "Test Title",
-        "namespace": random.randint(0, 10),
+        "namespace": 14,
     }
+    return base | kwargs
 
 
 def test_from_raw_keeps_an_edit() -> None:
@@ -35,9 +35,7 @@ def test_from_raw_keeps_an_edit() -> None:
     assert wiki_event is not None
     assert wiki_event.event_id == payload["meta"]["id"]
     assert wiki_event.entity == payload["wiki"]
-    assert wiki_event.event_ts == datetime.fromisoformat(
-        payload["timestamp"].replace("Z", "+00:00")
-    )
+    assert wiki_event.event_ts == datetime.fromtimestamp(payload["timestamp"], tz=UTC)
     assert wiki_event.byte_delta == payload["length"]["new"] - payload["length"]["old"]
     assert wiki_event.is_bot == payload["bot"]
     assert wiki_event.received_at == raw_event.received_at
@@ -62,7 +60,7 @@ def test_shrinking_byte_delta() -> None:
 
 def test_dropped_type() -> None:
     payload = create_payload()
-    payload["type"] = "delete"
+    payload["type"] = "categorize"
     raw_event = _raw(payload)
     wiki_event = WikiEvent.from_raw(raw_event)
     assert wiki_event is None

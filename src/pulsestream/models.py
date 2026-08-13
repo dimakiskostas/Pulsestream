@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -38,8 +38,14 @@ class WikiEvent(BaseModel):
 
         event_id = data.get("meta", {}).get("id")
         entity = data.get("wiki")
-        event_ts = data.get("timestamp").replace("Z", "+00:00")
-        event_ts = datetime.fromisoformat(event_ts)
+        timestamp_value = data.get("timestamp")
+
+        if isinstance(timestamp_value, (int, float)):
+            event_ts = datetime.fromtimestamp(timestamp_value, tz=UTC)
+        elif isinstance(timestamp_value, str):
+            event_ts = datetime.fromisoformat(timestamp_value.replace("Z", "+00:00"))
+        else:
+            return None
 
         length = data.get("length", {})
         byte_delta = length.get("new", 0) - length.get("old", 0)

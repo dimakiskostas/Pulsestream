@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "duckdb>=1.5.5",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "httpx-sse>=0.4.3",
@@ -57,5 +58,3 @@ strict = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = "--cov=pulsestream --cov-report=term-missing"
-
-

@@ -1,5 +1,6 @@
 import json
-from datetime import UTC, datetime
+from datetime import datetime
+from typing import Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -20,6 +21,9 @@ class WikiEvent(BaseModel):
     byte_delta: int
     is_bot: bool
     received_at: datetime
+    event_type: Literal["edit", "new"]
+    title: str
+    namespace: int
 
     @classmethod
     def from_raw(cls, raw: RawEvent) -> "WikiEvent | None":
@@ -33,33 +37,26 @@ class WikiEvent(BaseModel):
             return None
 
         event_id = data.get("meta", {}).get("id")
-        entity = data.get("wiki") or "Wiki"
-        event_ts_value = data.get("meta", {}).get("dt")
+        entity = data.get("wiki")
+        event_ts = data.get("timestamp")
 
-        if event_ts_value is None:
-            return None
+        length = data.get("length", {})
+        byte_delta = length.get("new", 0) - length.get("old", 0)
 
-        if isinstance(event_ts_value, (int, float)):
-            event_ts = datetime.fromtimestamp(event_ts_value, tz=UTC)
-        else:
-            event_ts = datetime.fromisoformat(str(event_ts_value).replace("Z", "+00:00"))
-
-        byte_delta = data.get("byte_delta")
-        if byte_delta is None:
-            length = data.get("length", {})
-            byte_delta = length.get("new", 0) - length.get("old", 0)
-
-        is_bot = data.get("is_bot")
+        is_bot = data.get("bot")
         if is_bot is None:
             is_bot = data.get("bot", False)
-        if isinstance(is_bot, str):
-            is_bot = is_bot.lower() == "true"
 
+        title = data.get("title", "")
+        namespace = data.get("namespace", 0)
         return cls(
-            event_id=str(event_id),
+            event_id=event_id,
             entity=str(entity),
             event_ts=event_ts,
             byte_delta=int(byte_delta),
             is_bot=bool(is_bot),
             received_at=raw.received_at,
+            event_type=data.get("type"),
+            title=title,
+            namespace=namespace,
         )

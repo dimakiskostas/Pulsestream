@@ -42,8 +42,6 @@ class WikiEvent(BaseModel):
 
         if isinstance(timestamp_value, (int, float)):
             event_ts = datetime.fromtimestamp(timestamp_value, tz=UTC)
-        elif isinstance(timestamp_value, str):
-            event_ts = datetime.fromisoformat(timestamp_value.replace("Z", "+00:00"))
         else:
             return None
 

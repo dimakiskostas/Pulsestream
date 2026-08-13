@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pulsestream.models import RawEvent, WikiEvent
@@ -19,11 +19,11 @@ def create_payload(**kwargs) -> dict[str, Any]:
         "type": "edit",
         "meta": {"id": "e49b3bf0-04d9-4104-877f-64cbc2e5e9d9"},
         "timestamp": 1786622924,
-        "wiki": "test_entity",
+        "wiki": "enwiki",
         "length": {"old": 3359, "new": 3409},
         "bot": False,
         "title": "Test Title",
-        "namespace": 14,
+        "namespace": 0,
     }
     return base | kwargs
 
@@ -42,16 +42,15 @@ def test_from_raw_keeps_an_edit() -> None:
 
 
 def test_timezone_aware_timestamp() -> None:
-    payload = create_payload()
-    payload["timestamp"] = datetime.now(UTC).isoformat()
+    payload = create_payload(timestamp=1786622989)
     raw_event = _raw(payload)
     wiki_event = WikiEvent.from_raw(raw_event)
     assert wiki_event is not None
-    assert wiki_event.event_ts.tzinfo is not None
+    assert wiki_event.event_ts.utcoffset() == timedelta(0)
 
 
 def test_shrinking_byte_delta() -> None:
-    payload = create_payload()
+    payload = create_payload(length={"old": 3409, "new": 3359})
     raw_event = _raw(payload)
     wiki_event = WikiEvent.from_raw(raw_event)
     assert wiki_event is not None
@@ -59,8 +58,7 @@ def test_shrinking_byte_delta() -> None:
 
 
 def test_dropped_type() -> None:
-    payload = create_payload()
-    payload["type"] = "categorize"
+    payload = create_payload(type="categorize")
     raw_event = _raw(payload)
     wiki_event = WikiEvent.from_raw(raw_event)
     assert wiki_event is None

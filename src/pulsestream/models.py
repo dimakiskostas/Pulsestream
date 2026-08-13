@@ -52,8 +52,8 @@ class WikiEvent(BaseModel):
 
         is_bot = data.get("bot")
 
-        title = data.get("title", "")
-        namespace = data.get("namespace", 0)
+        title = data.get("title")
+        namespace = data.get("namespace")
         return cls(
             event_id=event_id,
             entity=str(entity),

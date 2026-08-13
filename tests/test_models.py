@@ -1,10 +1,12 @@
 import json
+import random
 from datetime import UTC, datetime
+from typing import Any
 
 from pulsestream.models import RawEvent, WikiEvent
 
 
-def _raw(payload: dict[str, any]) -> RawEvent:
+def _raw(payload: dict[str, Any]) -> RawEvent:
     return RawEvent(
         source="test",
         received_at=datetime.now(UTC),
@@ -13,15 +15,21 @@ def _raw(payload: dict[str, any]) -> RawEvent:
     )
 
 
-def test_from_raw_keeps_an_edit() -> None:
-    payload = {
+def create_payload() -> dict[str, Any]:
+    return {
         "type": "edit",
-        "meta": {"id": "123"},
+        "meta": {"id": str(random.randint(1, 1000))},
         "timestamp": datetime.now(UTC).isoformat(),
         "wiki": "test_entity",
-        "length": {"new": 100, "old": 50},
-        "bot": False,
+        "length": random.choice([{"new": 100, "old": 50}, {"new": 50, "old": 100}]),
+        "bot": random.choice([True, False]),
+        "title": "Test Title",
+        "namespace": random.randint(0, 10),
     }
+
+
+def test_from_raw_keeps_an_edit() -> None:
+    payload = create_payload()
     raw_event = _raw(payload)
     wiki_event = WikiEvent.from_raw(raw_event)
     assert wiki_event is not None
@@ -36,14 +44,8 @@ def test_from_raw_keeps_an_edit() -> None:
 
 
 def test_timezone_aware_timestamp() -> None:
-    payload = {
-        "type": "edit",
-        "meta": {"id": "123"},
-        "timestamp": datetime.now(UTC).isoformat(),
-        "wiki": "test_entity",
-        "length": {"new": 100, "old": 50},
-        "bot": False,
-    }
+    payload = create_payload()
+    payload["timestamp"] = datetime.now(UTC).isoformat()
     raw_event = _raw(payload)
     wiki_event = WikiEvent.from_raw(raw_event)
     assert wiki_event is not None
@@ -51,14 +53,7 @@ def test_timezone_aware_timestamp() -> None:
 
 
 def test_shrinking_byte_delta() -> None:
-    payload = {
-        "type": "edit",
-        "meta": {"id": "123"},
-        "timestamp": datetime.now(UTC).isoformat(),
-        "wiki": "test_entity",
-        "length": {"new": 50, "old": 100},
-        "bot": False,
-    }
+    payload = create_payload()
     raw_event = _raw(payload)
     wiki_event = WikiEvent.from_raw(raw_event)
     assert wiki_event is not None
@@ -66,14 +61,8 @@ def test_shrinking_byte_delta() -> None:
 
 
 def test_dropped_type() -> None:
-    payload = {
-        "type": "delete",
-        "meta": {"id": "123"},
-        "timestamp": datetime.now(UTC).isoformat(),
-        "wiki": "test_entity",
-        "length": {"new": 50, "old": 100},
-        "bot": False,
-    }
+    payload = create_payload()
+    payload["type"] = "delete"
     raw_event = _raw(payload)
     wiki_event = WikiEvent.from_raw(raw_event)
     assert wiki_event is None

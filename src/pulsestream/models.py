@@ -38,14 +38,13 @@ class WikiEvent(BaseModel):
 
         event_id = data.get("meta", {}).get("id")
         entity = data.get("wiki")
-        event_ts = data.get("timestamp")
+        event_ts = data.get("timestamp").replace("Z", "+00:00")
+        event_ts = datetime.fromisoformat(event_ts)
 
         length = data.get("length", {})
         byte_delta = length.get("new", 0) - length.get("old", 0)
 
         is_bot = data.get("bot")
-        if is_bot is None:
-            is_bot = data.get("bot", False)
 
         title = data.get("title", "")
         namespace = data.get("namespace", 0)

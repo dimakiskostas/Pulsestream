@@ -50,6 +50,8 @@ class WikimediaSource:
                 elif 500 <= e.response.status_code < 600:
                     await asyncio.sleep(d)
                     continue
+                else:
+                    raise httpx.HTTPStatusError(e.response) from e
             except httpx.HTTPError:
                 attempt += 1
                 d = delay_for(attempt)

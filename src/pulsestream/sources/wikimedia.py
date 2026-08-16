@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import httpx
-from httpx_sse import SSEError, aconnect_sse
+from httpx_sse import aconnect_sse
 
 from pulsestream.models import RawEvent
 
@@ -12,12 +12,12 @@ STREAM_URL = "https://stream.wikimedia.org/v2/stream/recentchange"
 
 
 def delay_for(attempt: int, base: float = 1.0, cap: float = 30.0) -> float:
-    d = min(cap, base * 2**attempt)
+    d = base_delay_for(attempt, base, cap)
     return d / 2 + random.uniform(0, d / 2)
 
 
 def base_delay_for(attempt: int, base: float = 1.0, cap: float = 30.0) -> float:
-    return min(cap, base * 2**attempt)
+    return float(min(cap, base * (2**attempt)))
 
 
 class WikimediaSource:
@@ -47,16 +47,12 @@ class WikimediaSource:
                 continue
             except httpx.HTTPStatusError as e:
                 attempt += 1
-                d = delay_for(attempt)
+                backoff = delay_for(attempt)
                 if e.response.status_code == 429:
                     await asyncio.sleep(60)
                     continue
                 elif 500 <= e.response.status_code < 600:
-                    await asyncio.sleep(d)
+                    await asyncio.sleep(backoff)
                     continue
                 else:
                     raise
-            except SSEError:
-                attempt += 1
-                d = delay_for(attempt)
-                await asyncio.sleep(d)

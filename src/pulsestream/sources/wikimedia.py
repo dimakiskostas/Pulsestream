@@ -4,25 +4,22 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import httpx
-from httpx_sse import aconnect_sse
+from httpx_sse import SSEError, aconnect_sse
 
 from pulsestream.models import RawEvent
 
 STREAM_URL = "https://stream.wikimedia.org/v2/stream/recentchange"
 
 
+def delay_for(attempt: int, base: float = 1.0, cap: float = 30.0) -> float:
+    d = min(cap, base * 2**attempt)
+    return d / 2 + random.uniform(0, d / 2)
+
+
 class WikimediaSource:
-    def __init__(self):
-        self.cap = 30
-        self.base = 1
-
-    def delay_for(attemp: int, base: float = 1.0, cap: float = 30.0) -> float:
-        d = min(cap, base * 2**attemp)
-        return d / 2 + random.uniform(0, d / 2)
-
     async def stream(self) -> AsyncIterator[RawEvent]:
-        attemp = 0
-        RESET_AFTER = 500
+        attempt = 0
+        RESET_AFTER = 1000
         while True:
             try:
                 events_seen = 0
@@ -38,26 +35,26 @@ class WikimediaSource:
                                 )
                                 events_seen += 1
                                 if events_seen == RESET_AFTER:
-                                    attemp = 0
+                                    attempt = 0
             except httpx.RequestError:
-                attemp += 1
-                d = self.delay_for(attemp)
+                attempt += 1
+                d = delay_for(attempt)
                 await asyncio.sleep(d)
                 continue
             except httpx.HTTPStatusError as e:
-                attemp += 1
-                d = self.delay_for(attemp)
+                attempt += 1
+                d = delay_for(attempt)
                 if e.response.status_code == 429:
                     await asyncio.sleep(60)
                     continue
-                elif e.response.status_code[0] == "5":
+                elif 500 <= e.response.status_code < 600:
                     await asyncio.sleep(d)
                     continue
-                else:
-                    raise httpx.HTTPStatusError(
-                        f"HTTP error occurred: {e.response.status_code} - {e.response.text}"
-                    ) from e
             except httpx.HTTPError:
-                attemp += 1
-                d = self.delay_for(attemp)
+                attempt += 1
+                d = delay_for(attempt)
+                await asyncio.sleep(d)
+            except SSEError:
+                attempt += 1
+                d = delay_for(attempt)
                 await asyncio.sleep(d)

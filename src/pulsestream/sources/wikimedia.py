@@ -16,6 +16,10 @@ def delay_for(attempt: int, base: float = 1.0, cap: float = 30.0) -> float:
     return d / 2 + random.uniform(0, d / 2)
 
 
+def base_delay_for(attempt: int, base: float = 1.0, cap: float = 30.0) -> float:
+    return min(cap, base * 2**attempt)
+
+
 class WikimediaSource:
     async def stream(self) -> AsyncIterator[RawEvent]:
         attempt = 0
@@ -38,8 +42,8 @@ class WikimediaSource:
                                     attempt = 0
             except httpx.RequestError:
                 attempt += 1
-                d = delay_for(attempt)
-                await asyncio.sleep(d)
+                backoff = delay_for(attempt)
+                await asyncio.sleep(backoff)
                 continue
             except httpx.HTTPStatusError as e:
                 attempt += 1
@@ -51,11 +55,7 @@ class WikimediaSource:
                     await asyncio.sleep(d)
                     continue
                 else:
-                    raise httpx.HTTPStatusError(e.response) from e
-            except httpx.HTTPError:
-                attempt += 1
-                d = delay_for(attempt)
-                await asyncio.sleep(d)
+                    raise
             except SSEError:
                 attempt += 1
                 d = delay_for(attempt)

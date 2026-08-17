@@ -1,4 +1,4 @@
-from _collections_abc import Iterator
+from collections.abc import Iterator
 
 import duckdb
 
@@ -16,7 +16,7 @@ def test_init_db(con: Iterator[duckdb.DuckDBPyConnection]):
 
 
 def test_column_ordering(con: Iterator[duckdb.DuckDBPyConnection]):
-    WikiEvent = create_WikiEvent(title="Value 1", entity="Value 2")
-    write_batch(con, [WikiEvent])
+    event = create_WikiEvent(title="Value 1", entity="Value 2")
+    write_batch(con, [event])
     rows = con.execute("SELECT wiki_events.title, wiki_events.entity FROM wiki_events").fetchall()
-    return rows[0] == ("Value 1", "Value 2")
+    assert rows[0] == ("Value 1", "Value 2")

@@ -58,15 +58,23 @@ async def per_bucket_counts(
     request: Request,
     bucket: Literal["10s", "1m", "5m", "1h"] = "10s",
     minutes: int = 10,
-) -> dict[str, object]:
+) -> TimeseriesResponse:
+    bucket_intervals: dict[Literal["10s", "1m", "5m", "1h"], str] = {
+        "10s": "10 seconds",
+        "1m": "1 minute",
+        "5m": "5 minutes",
+        "1h": "1 hour",
+    }
+    interval = bucket_intervals[bucket]
+
     con: duckdb.DuckDBPyConnection = request.app.state.con
     rows = con.execute(
-        "SELECT time_bucket(INTERVAL f'{bucket}', event_ts) as bucket_ts, COUNT(*) as count "
+        f"SELECT time_bucket(INTERVAL '{interval}', event_ts) as bucket_ts, COUNT(*) as count "
         "FROM wiki_events "
-        "WHERE event_ts > now() - (? * INTERVAL '1 minutes') "
+        "WHERE event_ts > now() - (? * INTERVAL '{interval}') "
         "GROUP BY bucket_ts "
-        "ORDER BY bucket_ts"
+        "ORDER BY bucket_ts",
+        [minutes],
     ).fetchall()
     points = [TimeseriesPoint(time=row[0], count=row[1]) for row in rows]
-    response = TimeseriesResponse(points=points)
-    return response.model_dump()
+    return TimeseriesResponse(points=points)

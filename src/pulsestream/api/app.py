@@ -1,18 +1,20 @@
 import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Literal
 
 import duckdb
 from fastapi import FastAPI, Request
 
 from pulsestream.config import settings
-from pulsestream.models import RawEvent
+from pulsestream.models import RawEvent, TimeseriesPoint, TimeseriesResponse
 from pulsestream.pipeline import run_consumer, run_producer
 from pulsestream.sources.wikimedia import WikimediaSource
 from pulsestream.storage.duck import init_db
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     con = duckdb.connect(settings.db_path)
     init_db(con)
     app.state.con = con
@@ -23,7 +25,6 @@ async def lifespan(app: FastAPI):
     consumer = asyncio.create_task(run_consumer(queue, con))
 
     yield
-
     producer.cancel()
     queue.put_nowait(None)
     await queue.join()
@@ -42,23 +43,30 @@ async def health() -> dict[str, str]:
 @app.get("/stats/latest")
 async def status_latest(request: Request) -> dict[str, object]:
     con: duckdb.DuckDBPyConnection = request.app.state.con
-    count, latest = con.execute(
-        "SELECT COUNT(*), MAX(event_ts) FROM wiki_eventsWHERE event_ts > now() - INTERVAL 1 MINUTE"
+    row = con.execute(
+        "SELECT COUNT(*), MAX(event_ts) FROM wiki_events WHERE event_ts > now() - INTERVAL 1 MINUTE"
     ).fetchone()
+    if row is None:
+        return {"events_last_min": 0, "latest_event_ts": None}
+
+    count, latest = row
     return {"events_last_min": count, "latest_event_ts": latest}
 
 
 @app.get("/timeseries?bucket10s&minutes=10")
-async def per_bucket_counts(request: Request) -> dict[str, str]:
+async def per_bucket_counts(
+    request: Request,
+    bucket: Literal["10s", "1m", "5m", "1h"] = "10s",
+    minutes: int = 10,
+) -> dict[str, object]:
     con: duckdb.DuckDBPyConnection = request.app.state.con
-    time_bucket = con.execute(
-        "SELECT time_bucket("
-        "10 minutes "
-        ", event_ts) "
-        "INTERVAL 'bucket_ts' "
+    rows = con.execute(
+        "SELECT time_bucket(INTERVAL '10 minutes', event_ts) as bucket_ts, COUNT(*) as count "
         "FROM wiki_events "
+        "WHERE event_ts > now() - (? * INTERVAL '10 minutes') "
         "GROUP BY bucket_ts "
-        "ORDER BY bucket_ts "
-        "LIMIT 10"
-    ).fetchone()
-    return time_bucket
+        "ORDER BY bucket_ts"
+    ).fetchall()
+    points = [TimeseriesPoint(time=row[0], count=row[1]) for row in rows]
+    response = TimeseriesResponse(points=points)
+    return response.model_dump()

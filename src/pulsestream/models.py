@@ -63,3 +63,12 @@ class WikiEvent(BaseModel):
             title=title,
             namespace=namespace,
         )
+
+
+class TimeseriesPoint(BaseModel):
+    time: datetime
+    count: int
+
+
+class TimeseriesResponse(BaseModel):
+    points: list[TimeseriesPoint] = []

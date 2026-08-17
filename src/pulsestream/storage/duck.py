@@ -1,19 +1,19 @@
 import duckdb
 
-from .models import WikiEvent
+from pulsestream.models import WikiEvent
 
 
-def init_db(db_path: str) -> None:
+def init_db(db_path: duckdb.DuckDBPyConnection) -> None:
     conn = duckdb.connect(db_path)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS wiki_events (
             event_id VARCHAR PRIMARY KEY,
             entity VARCHAR,
-            event_ts TIMESTAMP,
+            event_ts TIMESTAMPTZ,
             byte_delta INTEGER,
             is_bot BOOLEAN,
-            received_at TIMESTAMP,
+            received_at TIMESTAMPTZ,
             namespace INTEGER,
             title VARCHAR,
             event_type VARCHAR
@@ -24,7 +24,8 @@ def init_db(db_path: str) -> None:
 
 def write_batch(con: duckdb.DuckDBPyConnection, batch: list[WikiEvent]) -> None:
     con.executemany(
-        "INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO wiki_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLIC(event_id) DO NOTHING",
         [
             (
                 e.event_id,

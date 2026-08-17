@@ -1,6 +1,5 @@
 import asyncio
 from asyncio import wait_for
-from datetime import time
 from time import monotonic
 
 import duckdb
@@ -15,11 +14,12 @@ async def run_producer(source: EventSource, queue: asyncio.Queue[RawEvent | None
         await queue.put(raw)
 
 
-def should_flush(batnch_len, sec_since_latest_flush, flush_interval: float = 2.0) -> bool:
-    if batnch_len <= 0:
-        return False
+def should_flush(
+    batnch_len: int, sec_since_latest_flush: float, flush_interval: float = 2.0
+) -> bool:
     if batnch_len > 0 and sec_since_latest_flush >= flush_interval:
         return True
+    return False
 
 
 async def run_consumer(
@@ -38,7 +38,7 @@ async def run_consumer(
                 if batch:
                     write_batch(con, batch)
                     batch.clear()
-                    last_flush = time.monotonic()
+                    last_flush = monotonic()
                 queue.task_done()
                 return
             event = WikiEvent.from_raw(raw)
@@ -46,15 +46,15 @@ async def run_consumer(
                 batch.append(event)
             if len(batch) >= batch_size:
                 write_batch(con, batch)
-                last_flush = time.monotonic()
+                last_flush = monotonic()
             queue.task_done()
 
             if should_flush(len(batch), monotonic() - last_flush, flush_interval):
                 write_batch(con, batch)
                 batch.clear()
-                last_flush = time.monotonic()
+                last_flush = monotonic()
         except TimeoutError:
             write_batch(con, batch)
             batch.clear()
-            last_flush = time.monotonic()
+            last_flush = monotonic()
             continue

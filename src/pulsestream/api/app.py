@@ -53,7 +53,7 @@ async def status_latest(request: Request) -> dict[str, object]:
     return {"events_last_min": count, "latest_event_ts": latest}
 
 
-@app.get("/timeseries?bucket10s&minutes=10")
+@app.get("/timeseries")
 async def per_bucket_counts(
     request: Request,
     bucket: Literal["10s", "1m", "5m", "1h"] = "10s",
@@ -61,9 +61,9 @@ async def per_bucket_counts(
 ) -> dict[str, object]:
     con: duckdb.DuckDBPyConnection = request.app.state.con
     rows = con.execute(
-        "SELECT time_bucket(INTERVAL '10 minutes', event_ts) as bucket_ts, COUNT(*) as count "
+        "SELECT time_bucket(INTERVAL f'{bucket}', event_ts) as bucket_ts, COUNT(*) as count "
         "FROM wiki_events "
-        "WHERE event_ts > now() - (? * INTERVAL '10 minutes') "
+        "WHERE event_ts > now() - (? * INTERVAL '1 minutes') "
         "GROUP BY bucket_ts "
         "ORDER BY bucket_ts"
     ).fetchall()

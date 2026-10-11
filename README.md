@@ -138,8 +138,15 @@ docs/
 
 ## Reading the history
 
-Each phase was built on its own branch and merged into `main` with a merge
-commit, so `git log --oneline --first-parent main` shows one line per phase and
-`git log --oneline --no-merges <merge>^1..<merge>^2` lists that phase's individual
-steps. The tutorial chapters walk through those steps in order and explain the
+`main` carries one commit per phase: each phase branch is reviewed as a pull
+request and squash-merged ("Phase 1 vertical slice (#5)", ...), so
+`git log --oneline --first-parent main` is the phase-level view. The step-by-step
+commits of a phase live on its branch, which is kept after the merge:
+
+```bash
+git log --oneline main..phase-1-vertical-slice   # the steps of Phase 1
+git checkout phase-2-storage-analytics           # the repo as it was at the end of Phase 2
+```
+
+The tutorial chapters walk through those steps in order and explain the
 decisions behind them.

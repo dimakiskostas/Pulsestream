@@ -19,13 +19,15 @@ up along the way. The design rationale stays in the HLD
 - **One commit per step** inside a branch. Every commit passes
   `ruff check`, `ruff format --check`, `mypy src` and `pytest` on its own,
   so you can check out any commit and have a working system at that point.
-- **One merge commit per phase** into `main` (`--no-ff`), so the phase
-  boundaries stay visible:
+- **One squash commit per phase** on `main`: each phase branch is reviewed as a
+  pull request and squash-merged, so `main` reads as a list of phases while the
+  branches keep the step-by-step history. The branches are kept, not deleted,
+  after the merge:
 
 ```bash
-git log --oneline --first-parent main          # one line per phase
-git log --oneline --no-merges <merge>^1..<merge>^2   # the steps of that phase
-git checkout phase-2-storage-analytics          # the repo as it was at the end of Phase 2
+git log --oneline --first-parent main               # one line per phase
+git log --oneline main..phase-2-storage-analytics   # the steps of that phase
+git checkout phase-2-storage-analytics              # the repo as it was at the end of Phase 2
 ```
 
 Commit messages carry the "why": read them with `git log --format=full` or

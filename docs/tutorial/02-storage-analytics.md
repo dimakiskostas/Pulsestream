@@ -5,8 +5,8 @@
 > truth, let DuckDB query it, build derived tables, add a Streamlit dashboard
 > that reads through the API, and a scheduled compaction job.
 
-Branch: `phase-2-storage-analytics`, 14 commits on top of Phase 1. Steps
-below are the commits in order (`git log --oneline --no-merges <merge>^1..<merge>^2`).
+Branch: `phase-2-storage-analytics`, 15 commits on top of Phase 1. Steps
+below are the commits in order (`git log --oneline main..phase-2-storage-analytics`).
 
 ## The system after Phase 2
 

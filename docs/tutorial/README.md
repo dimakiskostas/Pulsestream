@@ -37,7 +37,7 @@ Commit messages carry the "why": read them with `git log --format=full` or
 | ---------------------------------------------------- | --------- | ---------------------------- |
 | [00 Skeleton](00-skeleton.md)                        | 0         | `main` (PR #1)               |
 | [01 Vertical slice](01-vertical-slice.md)            | 1         | `phase-1-vertical-slice`     |
-| 02 Storage and analytics                             | 2         | `phase-2-storage-analytics`  |
+| [02 Storage and analytics](02-storage-analytics.md)  | 2         | `phase-2-storage-analytics`  |
 | 03 Anomaly detection v1                              | 3         | `phase-3-anomaly-detection`  |
 | 04 CI/CD and observability                           | 4         | `phase-4-cicd-observability` |
 | 05 Streaming decoupling                              | 5         | `phase-5-streaming-decoupling` |

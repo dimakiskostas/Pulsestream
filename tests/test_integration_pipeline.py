@@ -15,6 +15,7 @@ import duckdb
 
 from pulsestream.models import RawEvent, WikiEvent
 from pulsestream.pipeline import run_consumer, run_producer
+from pulsestream.processing.processor import StreamProcessor
 from pulsestream.sources.fake import FakeSource, load_fixture
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_events.jsonl"
@@ -45,7 +46,7 @@ async def test_pipeline_persists_exactly_the_valid_events(con: duckdb.DuckDBPyCo
     await run_producer(FakeSource(fixture()), queue)  # finite source -> completes
     await queue.put(None)  # sentinel stops the consumer
 
-    await run_consumer(queue, con, batch_size=50, flush_interval=60.0)
+    await run_consumer(queue, StreamProcessor(con), batch_size=50, flush_interval=60.0)
 
     total, distinct = con.execute(
         "SELECT count(*), count(DISTINCT event_id) FROM wiki_events"
@@ -76,7 +77,7 @@ async def test_replaying_the_fixture_twice_is_idempotent(con: duckdb.DuckDBPyCon
         queue: asyncio.Queue[RawEvent | None] = asyncio.Queue()
         await run_producer(FakeSource(fixture()), queue)
         await queue.put(None)
-        await run_consumer(queue, con, batch_size=50, flush_interval=60.0)
+        await run_consumer(queue, StreamProcessor(con), batch_size=50, flush_interval=60.0)
     assert con.execute("SELECT count(*) FROM wiki_events").fetchone() == (EXPECTED_KEPT,)
 
 
@@ -86,7 +87,9 @@ async def test_bounded_queue_applies_backpressure_without_losing_events(
     """A tiny queue forces the producer to block on put; everything still arrives."""
     queue: asyncio.Queue[RawEvent | None] = asyncio.Queue(maxsize=8)
     producer = asyncio.create_task(run_producer(FakeSource(fixture()), queue))
-    consumer = asyncio.create_task(run_consumer(queue, con, batch_size=7, flush_interval=0.05))
+    consumer = asyncio.create_task(
+        run_consumer(queue, StreamProcessor(con), batch_size=7, flush_interval=0.05)
+    )
 
     await asyncio.wait_for(producer, timeout=10)
     await queue.put(None)

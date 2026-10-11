@@ -1,12 +1,12 @@
-import asyncio
-from collections.abc import Iterator
+"""The consumer loop decides *when* a batch is handed over; a recorder stands in for *what*."""
 
-import duckdb
+import asyncio
+import json
+
 import pytest
 
-import pulsestream.pipeline as pipeline
-from pulsestream.models import RawEvent, WikiEvent
-from pulsestream.pipeline import run_consumer, should_flush
+from pulsestream.models import RawEvent
+from pulsestream.pipeline import BatchResult, run_consumer, should_flush
 from tests.factories import _raw, create_payload
 
 
@@ -24,81 +24,70 @@ def make_raws(n: int) -> list[RawEvent]:
     return [_raw(create_payload(meta={"id": f"evt-{i:04d}"})) for i in range(n)]
 
 
+class Recorder:
+    """A Processor that records the event ids of every batch it is handed."""
+
+    def __init__(self) -> None:
+        self.batches: list[list[str]] = []
+
+    def process(self, raws: list[RawEvent]) -> BatchResult:
+        self.batches.append([json.loads(r.raw_payload)["meta"]["id"] for r in raws])
+        return BatchResult(raw=len(raws), kept=len(raws))
+
+
 @pytest.fixture
-def written(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[list[str]]]:
-    """Record every batch handed to ``write_batch`` (as lists of event ids)."""
-    calls: list[list[str]] = []
-
-    def fake_write_batch(con: duckdb.DuckDBPyConnection, batch: list[WikiEvent]) -> None:
-        calls.append([e.event_id for e in batch])
-
-    monkeypatch.setattr(pipeline, "write_batch", fake_write_batch)
-    yield calls
+def recorder() -> Recorder:
+    return Recorder()
 
 
-async def test_consumer_flushes_full_batches_exactly_once(
-    con: duckdb.DuckDBPyConnection, written: list[list[str]]
-) -> None:
+async def test_consumer_flushes_full_batches_exactly_once(recorder: Recorder) -> None:
     queue: asyncio.Queue[RawEvent | None] = asyncio.Queue()
     for raw in make_raws(12):
         await queue.put(raw)
     await queue.put(None)
 
-    await run_consumer(queue, con, batch_size=5, flush_interval=60.0)
+    await run_consumer(queue, recorder, batch_size=5, flush_interval=60.0)
 
-    assert [len(b) for b in written] == [5, 5, 2]
-    flat = [eid for b in written for eid in b]
-    assert len(flat) == len(set(flat)) == 12, "a flushed batch must never be re-written"
+    assert [len(b) for b in recorder.batches] == [5, 5, 2]
+    flat = [eid for b in recorder.batches for eid in b]
+    assert len(flat) == len(set(flat)) == 12, "a flushed batch must never be handed over again"
 
 
-async def test_consumer_flushes_on_time_when_batch_is_not_full(
-    con: duckdb.DuckDBPyConnection, written: list[list[str]]
-) -> None:
+async def test_consumer_flushes_on_time_when_batch_is_not_full(recorder: Recorder) -> None:
     queue: asyncio.Queue[RawEvent | None] = asyncio.Queue()
     for raw in make_raws(3):
         await queue.put(raw)
-    task = asyncio.create_task(run_consumer(queue, con, batch_size=100, flush_interval=0.05))
+    task = asyncio.create_task(run_consumer(queue, recorder, batch_size=100, flush_interval=0.05))
 
     # Poll rather than sleep a fixed time: a loaded CI box can delay the flush timer.
     for _ in range(500):
-        if written:
+        if recorder.batches:
             break
         await asyncio.sleep(0.01)
-    assert written == [[f"evt-{i:04d}" for i in range(3)]]
+    assert recorder.batches == [[f"evt-{i:04d}" for i in range(3)]]
 
     await queue.put(None)
     await asyncio.wait_for(task, timeout=2)
-    assert written == [[f"evt-{i:04d}" for i in range(3)]], "no empty flush on shutdown"
+    assert recorder.batches == [[f"evt-{i:04d}" for i in range(3)]], "no empty flush on shutdown"
 
 
-async def test_consumer_never_writes_empty_batches(
-    con: duckdb.DuckDBPyConnection, written: list[list[str]]
-) -> None:
+async def test_consumer_never_hands_over_empty_batches(recorder: Recorder) -> None:
     queue: asyncio.Queue[RawEvent | None] = asyncio.Queue()
-    task = asyncio.create_task(run_consumer(queue, con, batch_size=10, flush_interval=0.02))
+    task = asyncio.create_task(run_consumer(queue, recorder, batch_size=10, flush_interval=0.02))
     await asyncio.sleep(0.15)  # several flush intervals pass with nothing to write
     await queue.put(None)
     await asyncio.wait_for(task, timeout=2)
-    assert written == []
+    assert recorder.batches == []
 
 
-async def test_consumer_drops_unparseable_and_filtered_events(
-    con: duckdb.DuckDBPyConnection, written: list[list[str]]
-) -> None:
+async def test_consumer_passes_raw_events_through_untouched(recorder: Recorder) -> None:
+    """Filtering is the processor's job: the loop hands over every raw event, valid or not."""
     queue: asyncio.Queue[RawEvent | None] = asyncio.Queue()
     await queue.put(_raw(create_payload(meta={"id": "keep-1"})))
     await queue.put(_raw(create_payload(meta={"id": "drop-log"}, type="log")))
-    await queue.put(
-        RawEvent(
-            source="test",
-            received_at=make_raws(1)[0].received_at,
-            schema_version=1,
-            raw_payload="not json",
-        )
-    )
     await queue.put(_raw(create_payload(meta={"id": "keep-2"})))
     await queue.put(None)
 
-    await run_consumer(queue, con, batch_size=50, flush_interval=60.0)
+    await run_consumer(queue, recorder, batch_size=50, flush_interval=60.0)
 
-    assert written == [["keep-1", "keep-2"]]
+    assert recorder.batches == [["keep-1", "drop-log", "keep-2"]]

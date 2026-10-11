@@ -27,6 +27,7 @@ from pulsestream.config import Settings
 from pulsestream.config import settings as default_settings
 from pulsestream.models import RawEvent
 from pulsestream.pipeline import run_consumer, run_producer
+from pulsestream.processing.processor import StreamProcessor
 from pulsestream.sources.base import EventSource
 from pulsestream.sources.fake import FakeSource, load_fixture
 from pulsestream.sources.wikimedia import WikimediaSource
@@ -63,11 +64,13 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
         con = connect(cfg.db_path)
         queue: asyncio.Queue[RawEvent | None] = asyncio.Queue(maxsize=cfg.queue_maxsize)
         src = source if source is not None else build_source(cfg)
+        processor = StreamProcessor(con)
         producer = asyncio.create_task(run_producer(src, queue), name="producer")
         consumer = asyncio.create_task(
-            run_consumer(queue, con, cfg.batch_size, cfg.flush_interval), name="consumer"
+            run_consumer(queue, processor, cfg.batch_size, cfg.flush_interval), name="consumer"
         )
         app.state.con = con
+        app.state.processor = processor
         app.state.queue = queue
         app.state.producer = producer
         app.state.consumer = consumer

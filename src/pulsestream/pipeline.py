@@ -1,24 +1,37 @@
 """Producer/consumer pipeline over an in-process ``asyncio.Queue``.
 
-The producer pulls ``RawEvent`` objects from an ``EventSource`` and puts them on a
-bounded queue. A blocking ``put`` on a full queue is the backpressure mechanism: a
-slow consumer slows the producer down instead of growing memory without limit.
+The producer pulls ``RawEvent`` objects from an ``EventSource`` into a bounded queue;
+a full queue blocks ``put``, which is the backpressure mechanism.
 
-The consumer validates raw events into ``WikiEvent`` records and writes them to
-DuckDB in micro-batches. A batch is flushed when it reaches
-``batch_size`` *or* when ``flush_interval`` seconds have passed since the last
-flush, whichever comes first, so a quiet stream still lands within seconds.
-``None`` on the queue is a sentinel: flush whatever is buffered and stop.
+The consumer owns *when*: it collects raw events into micro-batches and hands each
+batch to a ``Processor``, which owns *what* happens to a batch (validation and
+storage now; the raw lake, rolling features and anomaly detection in later phases).
+Flush rules (ADR 0004): the batch reached ``batch_size``, or ``flush_interval``
+seconds passed since the last flush and the batch is non-empty. ``None`` on the
+queue is the sentinel: flush whatever is buffered and stop.
 """
 
 import asyncio
+from dataclasses import dataclass
 from time import monotonic
+from typing import Protocol
 
-import duckdb
-
-from pulsestream.models import RawEvent, WikiEvent
+from pulsestream.models import RawEvent
 from pulsestream.sources.base import EventSource
-from pulsestream.storage.duck import write_batch
+
+
+@dataclass(frozen=True)
+class BatchResult:
+    """What a processor did with one micro-batch."""
+
+    raw: int  # raw events received
+    kept: int  # events that passed validation (not necessarily new rows: writes are idempotent)
+
+
+class Processor(Protocol):
+    def process(self, raws: list[RawEvent]) -> BatchResult:
+        """Handle one micro-batch. Synchronous; the consumer decides where it runs."""
+        ...
 
 
 async def run_producer(source: EventSource, queue: asyncio.Queue[RawEvent | None]) -> None:
@@ -35,18 +48,18 @@ def should_flush(
 
 async def run_consumer(
     queue: asyncio.Queue[RawEvent | None],
-    con: duckdb.DuckDBPyConnection,
+    processor: Processor,
     batch_size: int = 50,
     flush_interval: float = 2.0,
 ) -> None:
-    batch: list[WikiEvent] = []
+    batch: list[RawEvent] = []
     last_flush = monotonic()
 
     def flush() -> None:
         nonlocal last_flush
-        if batch:  # never issue an empty write
-            write_batch(con, batch)
-            batch.clear()  # a flushed batch must not be written again
+        if batch:  # never hand over an empty batch
+            processor.process(batch)
+            batch.clear()  # a flushed batch must not be processed again
         last_flush = monotonic()
 
     while True:
@@ -61,9 +74,7 @@ async def run_consumer(
             if raw is None:  # sentinel -> flush & stop (used by tests and shutdown)
                 flush()
                 return
-            event = WikiEvent.from_raw(raw)
-            if event is not None:
-                batch.append(event)
+            batch.append(raw)
             if len(batch) >= batch_size or should_flush(
                 len(batch), monotonic() - last_flush, flush_interval
             ):

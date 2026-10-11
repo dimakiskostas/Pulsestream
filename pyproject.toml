@@ -15,13 +15,14 @@ dependencies = [
     "prometheus-client>=0.26.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
-    "pytz>=2026.3.post1",
+    # DuckDB imports pytz lazily to return tz-aware datetimes for TIMESTAMPTZ columns.
+    "pytz>=2026.5",
     "structlog>=26.1.0",
     "uvicorn>=0.52.1",
 ]
 
 [project.scripts]
-pulsestream = "pulsestream:main"
+pulsestream = "pulsestream.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]
@@ -32,6 +33,7 @@ dev = [
     "mypy>=2.3.0",
     "pandera>=0.32.1",
     "pre-commit>=4.6.1",
+    "pre-commit-hooks>=6.0.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",

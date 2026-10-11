@@ -1,18 +1,64 @@
+# Pre-commit runs the same tools, at the same versions, as CI.
+#
+# Every hook is a `repo: local` entry executed through `uv run`, so the only
+# source of tool versions is uv.lock: no second copy of ruff from a mirror
+# repo, and no pip-built hook virtualenvs (which need network access and hang
+# on locked-down machines). Hook checks (trailing-whitespace, check-yaml, ...)
+# come from the `pre-commit-hooks` package in the dev dependency group.
+#
+#   uv run pre-commit install          # once per clone
+#   uv run pre-commit run --all-files  # what CI effectively runs
 
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.2
+  - repo: local
     hooks:
-      - id: ruff
-        args: [--fix]
-      - id : ruff-format
-
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
-    hooks:
-      - id : check-yaml
-      - id : check-added-large-files
-      - id : detect-private-key
-      - id : end-of-file-fixer
-      - id : trailing-whitespace
-      - id : check-case-conflict
+      - id: trailing-whitespace
+        name: trailing whitespace
+        entry: uv run trailing-whitespace-fixer
+        language: system
+        types: [text]
+      - id: end-of-file-fixer
+        name: end of file newline
+        entry: uv run end-of-file-fixer
+        language: system
+        types: [text]
+      - id: check-yaml
+        name: check yaml
+        entry: uv run check-yaml
+        language: system
+        types: [yaml]
+      - id: check-toml
+        name: check toml
+        entry: uv run check-toml
+        language: system
+        types: [toml]
+      - id: check-merge-conflict
+        name: check merge conflict markers
+        entry: uv run check-merge-conflict
+        language: system
+        types: [text]
+      - id: check-added-large-files
+        name: check added large files (1 MB)
+        entry: uv run check-added-large-files --maxkb=1024
+        language: system
+      - id: detect-private-key
+        name: detect private key
+        entry: uv run detect-private-key
+        language: system
+        types: [text]
+      - id: ruff-check
+        name: ruff check (autofix)
+        entry: uv run ruff check --fix
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types_or: [python, pyi]
+      - id: mypy
+        name: mypy src
+        entry: uv run mypy src
+        language: system
+        pass_filenames: false
+        types_or: [python, pyi]

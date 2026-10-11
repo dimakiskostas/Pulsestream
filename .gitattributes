@@ -1,0 +1,14 @@
+# Normalise line endings: the repo stores LF and every platform checks out LF.
+# Windows clones with core.autocrlf=true would otherwise rewrite shell scripts,
+# Dockerfiles and YAML to CRLF on checkout.
+* text=auto eol=lf
+
+# Replay fixtures are text (one JSON per line) but nobody wants them in a diff.
+tests/fixtures/*.jsonl -diff linguist-generated=true
+
+# Binary assets
+*.pdf binary
+*.parquet binary
+*.duckdb binary
+*.png binary
+*.jpg binary

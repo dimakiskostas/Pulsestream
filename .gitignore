@@ -9,9 +9,25 @@ wheels/
 # Virtual environments
 .venv
 
-*.duckdb
-.env
+# Tooling caches
 .ruff_cache/
 .pytest_cache/
+.mypy_cache/
 .coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Local config and runtime data
+.env
+*.duckdb
+*.duckdb.wal
 raw/
+data/
+logs/
+
+# Editors / assistants
+.vscode/
+.idea/
+.claude/
+.DS_Store

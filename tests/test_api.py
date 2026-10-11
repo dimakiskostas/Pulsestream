@@ -90,9 +90,46 @@ async def test_timeseries_rejects_unknown_bucket_and_bad_minutes(client: httpx.A
 async def test_openapi_documents_the_response_models(client: httpx.AsyncClient) -> None:
     schema = (await client.get("/openapi.json")).json()
     assert schema["info"]["title"] == "PulseStream"
-    assert {"HealthStatus", "StatsLatest", "TimeseriesResponse", "LakeStats"} <= set(
-        schema["components"]["schemas"]
-    )
+    assert {
+        "HealthStatus",
+        "StatsLatest",
+        "TimeseriesResponse",
+        "LakeStats",
+        "AggregatesResponse",
+        "TopEntitiesResponse",
+        "JobsResponse",
+    } <= set(schema["components"]["schemas"])
+
+
+async def test_aggregates_and_top_entities_follow_the_refresh_job(
+    client: httpx.AsyncClient,
+) -> None:
+    # Charts read agg_minutely, which the scheduler refreshes; before a refresh it is empty.
+    assert (await client.get("/aggregates/minutely")).json()["points"] == []
+
+    await client.post("/jobs/refresh_aggregates/run")
+
+    combined = (await client.get("/aggregates/minutely", params={"minutes": 5})).json()
+    assert combined["entity"] is None and combined["minutes"] == 5
+    assert all(p["entity"] == "*" for p in combined["points"])
+    assert sum(p["count"] for p in combined["points"]) == N_EVENTS
+    assert sum(p["bot_count"] for p in combined["points"]) == 4  # i % 3 == 0 -> 0, 3, 6, 9
+    assert all(p["anomaly_count"] == 0 for p in combined["points"])
+
+    enwiki = (await client.get("/aggregates/minutely", params={"entity": "enwiki"})).json()
+    assert enwiki["entity"] == "enwiki"
+    assert sum(p["count"] for p in enwiki["points"]) == 5  # odd i
+    assert all(p["entity"] == "enwiki" for p in enwiki["points"])
+
+    top = (await client.get("/entities/top", params={"minutes": 5, "limit": 1})).json()
+    assert top["entities"] == [
+        {"entity": "dewiki", "count": 5, "bot_count": 2}
+    ]  # tie -> name order
+    both = (await client.get("/entities/top", params={"minutes": 5})).json()["entities"]
+    assert [e["entity"] for e in both] == ["dewiki", "enwiki"]
+
+    assert (await client.get("/aggregates/minutely", params={"minutes": 0})).status_code == 422
+    assert (await client.get("/entities/top", params={"limit": 0})).status_code == 422
 
 
 async def test_jobs_are_scheduled_and_can_be_run_on_demand(client: httpx.AsyncClient) -> None:

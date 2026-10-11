@@ -51,6 +51,33 @@ class LakeStats(BaseModel):
     last_received_at: datetime | None
 
 
+class AggPoint(BaseModel):
+    bucket_ts: datetime
+    entity: str  # "*" when all entities are combined
+    count: int
+    bot_count: int
+    avg_value: float | None  # mean byte_delta (count-weighted when combined)
+    max_value: int | None
+    anomaly_count: int
+
+
+class AggregatesResponse(BaseModel):
+    minutes: int
+    entity: str | None
+    points: list[AggPoint] = []
+
+
+class EntityCount(BaseModel):
+    entity: str
+    count: int
+    bot_count: int
+
+
+class TopEntitiesResponse(BaseModel):
+    minutes: int
+    entities: list[EntityCount] = []
+
+
 class JobStatus(BaseModel):
     name: str
     runs: int

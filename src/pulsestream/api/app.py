@@ -15,7 +15,10 @@ from fastapi import FastAPI, HTTPException, Query, Request
 
 from pulsestream import __version__
 from pulsestream.api.schemas import (
+    AggPoint,
+    AggregatesResponse,
     Bucket,
+    EntityCount,
     HealthStatus,
     JobsResponse,
     JobStatus,
@@ -25,6 +28,7 @@ from pulsestream.api.schemas import (
     TaskState,
     TimeseriesPoint,
     TimeseriesResponse,
+    TopEntitiesResponse,
 )
 from pulsestream.config import Settings
 from pulsestream.config import settings as default_settings
@@ -161,6 +165,64 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
         )
         points = [TimeseriesPoint(time=ts, count=n) for ts, n in rows]
         return TimeseriesResponse(bucket=bucket, minutes=minutes, points=points)
+
+    @app.get("/aggregates/minutely", response_model=AggregatesResponse)
+    async def aggregates_minutely(
+        request: Request,
+        minutes: int = Query(default=60, ge=1, le=7 * 24 * 60),
+        entity: str | None = Query(default=None, max_length=64),
+    ) -> AggregatesResponse:
+        """Per-minute buckets from agg_minutely (refreshed by the scheduler, ADR 0009).
+
+        Without ``entity`` the buckets combine every entity ("*"); with it, one wiki.
+        """
+        if entity is None:
+            sql = (
+                "SELECT bucket_ts, '*', CAST(sum(count) AS INTEGER), "
+                "CAST(sum(bot_count) AS INTEGER), sum(avg_value * count) / sum(count), "
+                "CAST(max(max_value) AS INTEGER), CAST(sum(anomaly_count) AS INTEGER) "
+                "FROM agg_minutely WHERE bucket_ts >= now() - (? * INTERVAL '1 minute') "
+                "GROUP BY bucket_ts ORDER BY bucket_ts"
+            )
+            params: list[object] = [minutes]
+        else:
+            sql = (
+                "SELECT bucket_ts, entity, count, bot_count, avg_value, max_value, anomaly_count "
+                "FROM agg_minutely WHERE bucket_ts >= now() - (? * INTERVAL '1 minute') "
+                "AND entity = ? ORDER BY bucket_ts"
+            )
+            params = [minutes, entity]
+        rows = await aquery(request.app.state.con, sql, params)
+        points = [
+            AggPoint(
+                bucket_ts=r[0],
+                entity=r[1],
+                count=r[2],
+                bot_count=r[3],
+                avg_value=r[4],
+                max_value=r[5],
+                anomaly_count=r[6],
+            )
+            for r in rows
+        ]
+        return AggregatesResponse(minutes=minutes, entity=entity, points=points)
+
+    @app.get("/entities/top", response_model=TopEntitiesResponse)
+    async def entities_top(
+        request: Request,
+        minutes: int = Query(default=60, ge=1, le=7 * 24 * 60),
+        limit: int = Query(default=10, ge=1, le=100),
+    ) -> TopEntitiesResponse:
+        """The busiest entities over the window, from agg_minutely."""
+        rows = await aquery(
+            request.app.state.con,
+            "SELECT entity, CAST(sum(count) AS INTEGER), CAST(sum(bot_count) AS INTEGER) "
+            "FROM agg_minutely WHERE bucket_ts >= now() - (? * INTERVAL '1 minute') "
+            "GROUP BY entity ORDER BY 2 DESC, entity LIMIT ?",
+            [minutes, limit],
+        )
+        entities = [EntityCount(entity=r[0], count=r[1], bot_count=r[2]) for r in rows]
+        return TopEntitiesResponse(minutes=minutes, entities=entities)
 
     @app.get("/lake", response_model=LakeStats)
     async def lake(request: Request) -> LakeStats:

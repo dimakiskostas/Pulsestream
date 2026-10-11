@@ -3,6 +3,9 @@
 # Dockerfiles and YAML to CRLF on checkout.
 * text=auto eol=lf
 
+# Replay fixtures are text (one JSON per line) but nobody wants them in a diff.
+tests/fixtures/*.jsonl -diff linguist-generated=true
+
 # Binary assets
 *.pdf binary
 *.parquet binary

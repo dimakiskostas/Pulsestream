@@ -37,7 +37,8 @@ async def capture(source: EventSource, n: int, path: str | Path) -> int:
     count = 0
     events = source.stream()
     try:
-        with out.open("w", encoding="utf-8") as f:
+        # newline="\n": Python's text mode would otherwise write CRLF on Windows.
+        with out.open("w", encoding="utf-8", newline="\n") as f:
             async for raw in events:
                 f.write(raw.model_dump_json() + "\n")
                 count += 1

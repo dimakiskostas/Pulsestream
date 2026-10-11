@@ -16,8 +16,10 @@ globs ``*.parquet`` never sees a half-written file.
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC
 from pathlib import Path
 
@@ -34,6 +36,22 @@ SCHEMA = pl.Schema(
         "raw_payload": pl.Utf8(),
     }
 )
+
+
+@dataclass(frozen=True)
+class CompactionResult:
+    partition: Path
+    merged: int  # input files merged away
+    rows: int  # rows in the merged output
+    output: Path
+
+
+def _file_ms(path: Path) -> int:
+    """The received_at milliseconds embedded in part-<ms>-... / merged-<ms>-... names."""
+    try:
+        return int(path.stem.split("-")[1])
+    except (IndexError, ValueError):
+        return 0
 
 
 class ParquetRawStore:
@@ -68,6 +86,44 @@ class ParquetRawStore:
             write_frame(target, to_frame(rows))
             written.append(target)
         return written
+
+    def compact(
+        self, *, min_files: int = 2, grace_seconds: float = 120.0, now: float | None = None
+    ) -> list[CompactionResult]:
+        """Merge the settled small files of each hour partition into one.
+
+        One file per micro-batch is right for latency and wrong for reads: a day is
+        tens of thousands of tiny files. A file is *settled* once its modification
+        time is older than ``grace_seconds`` (the writer never appends to a file, so a
+        settled file is complete). For every partition holding at least ``min_files``
+        settled files, they are streamed into one ``merged-<ms>-<uid>.parquet``
+        (temp + rename), then the inputs are deleted. Merged files take part in later
+        rounds, so a partition converges to a single file no matter how many batches
+        it received, and the work per round is bounded by one hour of data.
+
+        A reader that globs the partition during the delete window may see a file
+        vanish; readers treat that as transient and retry.
+        """
+        now_ts = time.time() if now is None else now
+        results: list[CompactionResult] = []
+        for partition in self.partitions():
+            settled = [
+                f
+                for f in sorted(partition.glob("*.parquet"))
+                if now_ts - f.stat().st_mtime >= grace_seconds
+            ]
+            if len(settled) < min_files:
+                continue
+            first_ms = min(_file_ms(f) for f in settled)
+            output = partition / f"merged-{first_ms}-{uuid.uuid4().hex[:8]}.parquet"
+            tmp = output.with_name(output.name + ".tmp")
+            pl.scan_parquet([str(f) for f in settled]).sink_parquet(tmp, compression="zstd")
+            os.replace(tmp, output)
+            rows = int(pl.scan_parquet(output).select(pl.len()).collect().item())
+            for f in settled:
+                f.unlink()
+            results.append(CompactionResult(partition, len(settled), rows, output))
+        return results
 
 
 def to_frame(rows: list[RawEvent]) -> pl.DataFrame:

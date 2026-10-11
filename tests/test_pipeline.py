@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 
 import pytest
 
@@ -78,6 +79,28 @@ async def test_consumer_never_hands_over_empty_batches(recorder: Recorder) -> No
     await queue.put(None)
     await asyncio.wait_for(task, timeout=2)
     assert recorder.batches == []
+
+
+async def test_processing_runs_on_a_worker_thread_not_the_event_loop() -> None:
+    class ThreadRecorder(Recorder):
+        def __init__(self) -> None:
+            super().__init__()
+            self.threads: set[int] = set()
+
+        def process(self, raws: list[RawEvent]) -> BatchResult:
+            self.threads.add(threading.get_ident())
+            return super().process(raws)
+
+    recorder = ThreadRecorder()
+    queue: asyncio.Queue[RawEvent | None] = asyncio.Queue()
+    for raw in make_raws(4):
+        await queue.put(raw)
+    await queue.put(None)
+
+    await run_consumer(queue, recorder, batch_size=2, flush_interval=60.0)
+
+    assert [len(b) for b in recorder.batches] == [2, 2]
+    assert recorder.threads and threading.get_ident() not in recorder.threads
 
 
 async def test_consumer_passes_raw_events_through_untouched(recorder: Recorder) -> None:

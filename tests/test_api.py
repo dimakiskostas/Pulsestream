@@ -12,6 +12,7 @@ import pytest
 from pulsestream.api.app import create_app
 from pulsestream.config import Settings
 from pulsestream.models import RawEvent
+from pulsestream.pipeline import BatchResult
 from pulsestream.sources.fake import FakeSource
 from tests.factories import _raw, create_payload
 
@@ -137,6 +138,46 @@ async def test_lifespan_shutdown_flushes_and_closes_cleanly(tmp_path: Path) -> N
     # The raw lake received the whole batch, including the dropped categorize event.
     lake_rows = sum(pl.read_parquet(f).height for f in app.state.raw_store.files())
     assert lake_rows == N_EVENTS + 1
+
+
+async def test_api_stays_responsive_while_a_batch_is_being_processed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DuckDB work runs on a worker thread, so /health answers mid-batch."""
+    import pulsestream.api.app as app_module
+    from pulsestream.processing.processor import StreamProcessor
+
+    class SlowProcessor(StreamProcessor):
+        in_process = False
+
+        def process(self, raws: list[RawEvent]) -> BatchResult:
+            SlowProcessor.in_process = True
+            try:
+                time.sleep(1.0)  # blocking, like a heavy query or a big Parquet write
+                return super().process(raws)
+            finally:
+                SlowProcessor.in_process = False
+
+    monkeypatch.setattr(app_module, "StreamProcessor", SlowProcessor)
+    cfg = Settings(
+        _env_file=None,
+        db_path=str(tmp_path / "slow.duckdb"),
+        lake_root=str(tmp_path / "raw"),
+        batch_size=1,
+        flush_interval=0.05,
+    )
+    app = create_app(cfg, source=FakeSource(recent_raws()))
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            for _ in range(500):  # wait until a batch is inside the slow processor
+                if SlowProcessor.in_process:
+                    break
+                await asyncio.sleep(0.01)
+            assert SlowProcessor.in_process
+            response = await c.get("/health")
+            assert response.status_code == 200
+            assert SlowProcessor.in_process, "the request completed while processing was busy"
 
 
 async def test_lake_can_be_disabled(tmp_path: Path) -> None:

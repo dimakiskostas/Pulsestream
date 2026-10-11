@@ -27,9 +27,13 @@ operational facts shape how it is used here:
 - `wiki_events` lives in a DuckDB file (`PULSE_DB_PATH`, default
   `pulsestream.duckdb`); the consumer task is the only writer.
 - Every connection is opened through `storage.duck.connect()`, which runs
-  `SET TimeZone = 'UTC'` and, for writers, creates the schema. The project
-  convention is "all timestamps are UTC and timezone-aware" (HLD §8); the
-  session setting makes that true at the boundary rather than at every call site.
+  `SET GLOBAL TimeZone = 'UTC'` and, for writers, creates the schema. The
+  project convention is "all timestamps are UTC and timezone-aware" (HLD §8);
+  the setting makes that true at the boundary rather than at every call site.
+  It must be `GLOBAL`: a plain `SET` is per connection, and the cursors that
+  worker threads open with `con.cursor()` would start from the local zone
+  again (found in Phase 2, when reads moved to worker threads and
+  `latest_event_ts` came back as `+03:00`).
 - The API serves reads from the same process as the writer in Phase 1 (one
   connection on the event loop; queries are tiny). When reads become heavy
   they move to `asyncio.to_thread` with a per-request `con.cursor()`.

@@ -91,6 +91,19 @@ def test_lake_view_exposes_parquet_rows_and_partition_columns(
     ensure_lake_view(con, store.glob)  # CREATE OR REPLACE: calling it again is harmless
 
 
+def test_cursors_inherit_the_utc_time_zone(con: duckdb.DuckDBPyConnection):
+    """Worker threads use con.cursor(); a session-level SET would not reach them."""
+    ts = datetime(2026, 10, 11, 9, 18, tzinfo=UTC)
+    write_batch(con, [create_WikiEvent(event_ts=ts)])
+    cur = con.cursor()
+    try:
+        assert cur.execute("SELECT current_setting('TimeZone')").fetchone() == ("UTC",)
+        (got,) = cur.execute("SELECT event_ts FROM wiki_events").fetchone() or (None,)
+        assert got == ts and got.utcoffset() == timedelta(0)
+    finally:
+        cur.close()
+
+
 def test_connect_creates_a_file_database_and_reopens_read_only(tmp_path: Path):
     path = tmp_path / "events.duckdb"
     con = connect(path)

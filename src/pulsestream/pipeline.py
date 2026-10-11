@@ -9,6 +9,10 @@ storage now; the raw lake, rolling features and anomaly detection in later phase
 Flush rules (ADR 0004): the batch reached ``batch_size``, or ``flush_interval``
 seconds passed since the last flush and the batch is non-empty. ``None`` on the
 queue is the sentinel: flush whatever is buffered and stop.
+
+Processing is synchronous work (DuckDB, Parquet) and runs in a worker thread via
+``asyncio.to_thread``, so a slow batch never stalls the event loop that serves the
+API and reads the stream (tutorial Part 1.5 gotcha: don't block the loop).
 """
 
 import asyncio
@@ -30,7 +34,7 @@ class BatchResult:
 
 class Processor(Protocol):
     def process(self, raws: list[RawEvent]) -> BatchResult:
-        """Handle one micro-batch. Synchronous; the consumer decides where it runs."""
+        """Handle one micro-batch. Synchronous; the consumer runs it on a worker thread."""
         ...
 
 
@@ -55,11 +59,12 @@ async def run_consumer(
     batch: list[RawEvent] = []
     last_flush = monotonic()
 
-    def flush() -> None:
+    async def flush() -> None:
         nonlocal last_flush
         if batch:  # never hand over an empty batch
-            processor.process(batch)
+            pending = list(batch)
             batch.clear()  # a flushed batch must not be processed again
+            await asyncio.to_thread(processor.process, pending)
         last_flush = monotonic()
 
     while True:
@@ -67,17 +72,17 @@ async def run_consumer(
         try:
             raw = await asyncio.wait_for(queue.get(), timeout=max(0.0, remaining))
         except TimeoutError:
-            flush()
+            await flush()
             continue
 
         try:
             if raw is None:  # sentinel -> flush & stop (used by tests and shutdown)
-                flush()
+                await flush()
                 return
             batch.append(raw)
             if len(batch) >= batch_size or should_flush(
                 len(batch), monotonic() - last_flush, flush_interval
             ):
-                flush()
+                await flush()
         finally:
             queue.task_done()

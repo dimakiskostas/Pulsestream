@@ -36,7 +36,7 @@ from pulsestream.scheduler.runner import build_scheduler
 from pulsestream.sources.base import EventSource
 from pulsestream.sources.fake import FakeSource, load_fixture
 from pulsestream.sources.wikimedia import WikimediaSource
-from pulsestream.storage.duck import connect, ensure_lake_view, lake_row_stats
+from pulsestream.storage.duck import aquery, connect, ensure_lake_view, lake_row_stats
 from pulsestream.storage.parquet import ParquetRawStore
 
 BUCKET_INTERVALS: dict[Bucket, str] = {
@@ -131,13 +131,13 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
 
     @app.get("/stats/latest", response_model=StatsLatest)
     async def stats_latest(request: Request) -> StatsLatest:
-        con: duckdb.DuckDBPyConnection = request.app.state.con
-        row = con.execute(
+        rows = await aquery(
+            request.app.state.con,
             "SELECT count(*), "
             "count(*) FILTER (WHERE event_ts > now() - INTERVAL 1 MINUTE), "
-            "max(event_ts) FROM wiki_events"
-        ).fetchone()
-        total, last_min, latest = row if row is not None else (0, 0, None)
+            "max(event_ts) FROM wiki_events",
+        )
+        total, last_min, latest = rows[0] if rows else (0, 0, None)
         lag = (datetime.now(UTC) - latest).total_seconds() if latest is not None else None
         return StatsLatest(
             events_total=total, events_last_min=last_min, latest_event_ts=latest, lag_seconds=lag
@@ -151,14 +151,14 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
     ) -> TimeseriesResponse:
         """Per-bucket event counts over the last ``minutes`` minutes (tutorial 1.6, your turn)."""
         interval = BUCKET_INTERVALS[bucket]  # allow-listed literal, never user text in SQL
-        con: duckdb.DuckDBPyConnection = request.app.state.con
-        rows = con.execute(
+        rows = await aquery(
+            request.app.state.con,
             f"SELECT time_bucket(INTERVAL '{interval}', event_ts) AS bucket_ts, count(*) "
             "FROM wiki_events "
             "WHERE event_ts > now() - (? * INTERVAL '1 minute') "
             "GROUP BY bucket_ts ORDER BY bucket_ts",
             [minutes],
-        ).fetchall()
+        )
         points = [TimeseriesPoint(time=ts, count=n) for ts, n in rows]
         return TimeseriesResponse(bucket=bucket, minutes=minutes, points=points)
 
@@ -175,8 +175,16 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
         rows, first, last = 0, None, None
         if files:
             con: duckdb.DuckDBPyConnection = request.app.state.con
-            ensure_lake_view(con, store.glob)
-            rows, first, last = lake_row_stats(con, store.glob)
+
+            def scan() -> tuple[int, datetime | None, datetime | None]:
+                cur = con.cursor()
+                try:
+                    ensure_lake_view(cur, store.glob)
+                    return lake_row_stats(cur, store.glob)
+                finally:
+                    cur.close()
+
+            rows, first, last = await asyncio.to_thread(scan)
         return LakeStats(
             enabled=True,
             root=str(store.root),

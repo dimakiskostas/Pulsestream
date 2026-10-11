@@ -16,6 +16,8 @@ class Settings(BaseSettings):
 
     # --- storage -------------------------------------------------------------
     db_path: str = "pulsestream.duckdb"
+    lake_root: str = "data/raw"  # partitioned Parquet raw store (immutable, replayable)
+    lake_enabled: bool = True
 
     # --- pipeline ------------------------------------------------------------
     queue_maxsize: int = 1000  # bounded queue == backpressure knob (HLD §7)

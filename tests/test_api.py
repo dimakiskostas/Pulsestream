@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import httpx
+import polars as pl
 import pytest
 
 from pulsestream.api.app import create_app
@@ -38,7 +39,11 @@ def recent_raws() -> list[RawEvent]:
 @pytest.fixture
 async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
     cfg = Settings(
-        _env_file=None, db_path=str(tmp_path / "api.duckdb"), batch_size=4, flush_interval=0.05
+        _env_file=None,
+        db_path=str(tmp_path / "api.duckdb"),
+        lake_root=str(tmp_path / "raw"),
+        batch_size=4,
+        flush_interval=0.05,
     )
     app = create_app(cfg, source=FakeSource(recent_raws()))
     async with app.router.lifespan_context(app):
@@ -91,7 +96,11 @@ async def test_openapi_documents_the_response_models(client: httpx.AsyncClient) 
 
 async def test_lifespan_shutdown_flushes_and_closes_cleanly(tmp_path: Path) -> None:
     cfg = Settings(
-        _env_file=None, db_path=str(tmp_path / "x.duckdb"), batch_size=1000, flush_interval=60.0
+        _env_file=None,
+        db_path=str(tmp_path / "x.duckdb"),
+        lake_root=str(tmp_path / "raw"),
+        batch_size=1000,
+        flush_interval=60.0,
     )
     app = create_app(cfg, source=FakeSource(recent_raws()))
     async with app.router.lifespan_context(app):
@@ -104,3 +113,22 @@ async def test_lifespan_shutdown_flushes_and_closes_cleanly(tmp_path: Path) -> N
     con = connect(tmp_path / "x.duckdb", read_only=True)
     assert con.execute("SELECT count(*) FROM wiki_events").fetchone() == (N_EVENTS,)
     con.close()
+    # The raw lake received the whole batch, including the dropped categorize event.
+    lake_rows = sum(pl.read_parquet(f).height for f in app.state.raw_store.files())
+    assert lake_rows == N_EVENTS + 1
+
+
+async def test_lake_can_be_disabled(tmp_path: Path) -> None:
+    cfg = Settings(
+        _env_file=None,
+        db_path=str(tmp_path / "y.duckdb"),
+        lake_root=str(tmp_path / "raw"),
+        lake_enabled=False,
+        flush_interval=0.05,
+    )
+    app = create_app(cfg, source=FakeSource(recent_raws()))
+    async with app.router.lifespan_context(app):
+        await asyncio.wait_for(app.state.producer, timeout=5)
+        await asyncio.sleep(0.2)
+    assert app.state.raw_store is None
+    assert not (tmp_path / "raw").exists()

@@ -32,6 +32,7 @@ from pulsestream.sources.base import EventSource
 from pulsestream.sources.fake import FakeSource, load_fixture
 from pulsestream.sources.wikimedia import WikimediaSource
 from pulsestream.storage.duck import connect
+from pulsestream.storage.parquet import ParquetRawStore
 
 BUCKET_INTERVALS: dict[Bucket, str] = {
     "10s": "10 seconds",
@@ -64,12 +65,14 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
         con = connect(cfg.db_path)
         queue: asyncio.Queue[RawEvent | None] = asyncio.Queue(maxsize=cfg.queue_maxsize)
         src = source if source is not None else build_source(cfg)
-        processor = StreamProcessor(con)
+        raw_store = ParquetRawStore(cfg.lake_root) if cfg.lake_enabled else None
+        processor = StreamProcessor(con, raw_store)
         producer = asyncio.create_task(run_producer(src, queue), name="producer")
         consumer = asyncio.create_task(
             run_consumer(queue, processor, cfg.batch_size, cfg.flush_interval), name="consumer"
         )
         app.state.con = con
+        app.state.raw_store = raw_store
         app.state.processor = processor
         app.state.queue = queue
         app.state.producer = producer

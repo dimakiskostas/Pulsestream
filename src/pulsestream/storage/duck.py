@@ -12,6 +12,7 @@ from pathlib import Path
 import duckdb
 
 from pulsestream.models import WikiEvent
+from pulsestream.storage.aggregates import init_aggregates
 
 
 def init_db(conn: duckdb.DuckDBPyConnection) -> None:
@@ -30,6 +31,7 @@ def init_db(conn: duckdb.DuckDBPyConnection) -> None:
         )
         """
     )
+    init_aggregates(conn)
 
 
 def connect(path: str | Path = ":memory:", *, read_only: bool = False) -> duckdb.DuckDBPyConnection:

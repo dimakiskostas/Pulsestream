@@ -15,7 +15,8 @@ dependencies = [
     "prometheus-client>=0.26.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
-    "pytz>=2026.3.post1",
+    # DuckDB imports pytz lazily to return tz-aware datetimes for TIMESTAMPTZ columns.
+    "pytz>=2026.5",
     "structlog>=26.1.0",
     "uvicorn>=0.52.1",
 ]

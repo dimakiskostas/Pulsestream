@@ -1,4 +1,4 @@
-"""Record a live sample for replay (tutorial Part 2.1).
+"""Record a live sample for replay.
 
 Captured once, committed under ``tests/fixtures/`` and replayed forever by
 ``FakeSource``: this is what keeps the test suite deterministic and offline.

@@ -1,4 +1,4 @@
-"""Replay source for deterministic tests and offline demos (HLD §10).
+"""Replay source for deterministic tests and offline demos.
 
 A live stream cannot be in the test suite. ``FakeSource`` satisfies the same
 ``EventSource`` shape as ``WikimediaSource`` and replays recorded ``RawEvent``

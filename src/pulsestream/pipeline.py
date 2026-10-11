@@ -1,11 +1,11 @@
-"""Producer/consumer pipeline over an in-process ``asyncio.Queue`` (HLD decision D1).
+"""Producer/consumer pipeline over an in-process ``asyncio.Queue``.
 
 The producer pulls ``RawEvent`` objects from an ``EventSource`` and puts them on a
 bounded queue. A blocking ``put`` on a full queue is the backpressure mechanism: a
 slow consumer slows the producer down instead of growing memory without limit.
 
 The consumer validates raw events into ``WikiEvent`` records and writes them to
-DuckDB in micro-batches (HLD decision D4). A batch is flushed when it reaches
+DuckDB in micro-batches. A batch is flushed when it reaches
 ``batch_size`` *or* when ``flush_interval`` seconds have passed since the last
 flush, whichever comes first, so a quiet stream still lands within seconds.
 ``None`` on the queue is a sentinel: flush whatever is buffered and stop.

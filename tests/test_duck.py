@@ -1,8 +1,9 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import duckdb
 
-from pulsestream.storage.duck import write_batch
+from pulsestream.storage.duck import connect, init_db, write_batch
 from tests.factories import create_WikiEvent
 
 
@@ -21,6 +22,11 @@ def test_dupe_write(con: duckdb.DuckDBPyConnection):
     assert con.execute("SELECT COUNT(*) FROM wiki_events").fetchall()[0][0] == 1
 
 
+def test_empty_batch_is_a_no_op(con: duckdb.DuckDBPyConnection):
+    write_batch(con, [])  # DuckDB would raise on an empty executemany
+    assert con.execute("SELECT COUNT(*) FROM wiki_events").fetchall()[0][0] == 0
+
+
 def test_init_db(con: duckdb.DuckDBPyConnection):
     """Protects from schema drift"""
     rows = con.execute("DESCRIBE wiki_events").fetchall()
@@ -36,8 +42,36 @@ def test_init_db(con: duckdb.DuckDBPyConnection):
     assert rows[8][0] == "event_type"
 
 
+def test_init_db_is_idempotent(con: duckdb.DuckDBPyConnection):
+    write_batch(con, [create_WikiEvent()])
+    init_db(con)  # CREATE TABLE IF NOT EXISTS: re-running must keep the data
+    assert con.execute("SELECT COUNT(*) FROM wiki_events").fetchall()[0][0] == 1
+
+
 def test_column_ordering(con: duckdb.DuckDBPyConnection):
     event = create_WikiEvent(title="Value 1", entity="Value 2")
     write_batch(con, [event])
     rows = con.execute("SELECT wiki_events.title, wiki_events.entity FROM wiki_events").fetchall()
     assert rows[0] == ("Value 1", "Value 2")
+
+
+def test_timestamps_come_back_in_utc(con: duckdb.DuckDBPyConnection):
+    """The session is pinned to UTC, so TIMESTAMPTZ values round-trip as UTC datetimes."""
+    ts = datetime(2026, 10, 11, 9, 18, tzinfo=UTC)
+    write_batch(con, [create_WikiEvent(event_ts=ts)])
+    (got,) = con.execute("SELECT event_ts FROM wiki_events").fetchone() or (None,)
+    assert got == ts
+    assert got.utcoffset() == timedelta(0)
+    assert con.execute("SELECT current_setting('TimeZone')").fetchone() == ("UTC",)
+
+
+def test_connect_creates_a_file_database_and_reopens_read_only(tmp_path: Path):
+    path = tmp_path / "events.duckdb"
+    con = connect(path)
+    write_batch(con, [create_WikiEvent()])
+    con.close()
+
+    ro = connect(path, read_only=True)
+    assert ro.execute("SELECT COUNT(*) FROM wiki_events").fetchone() == (1,)
+    assert ro.execute("SELECT current_setting('TimeZone')").fetchone() == ("UTC",)
+    ro.close()

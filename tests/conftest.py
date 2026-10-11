@@ -3,12 +3,12 @@ from collections.abc import Iterator
 import duckdb
 import pytest
 
-from pulsestream.storage.duck import init_db
+from pulsestream.storage.duck import connect
 
 
 @pytest.fixture
 def con() -> Iterator[duckdb.DuckDBPyConnection]:
-    con = duckdb.connect(":memory:")
-    init_db(con)
+    """An in-memory DuckDB with the schema created and the session pinned to UTC."""
+    con = connect(":memory:")
     yield con
     con.close()

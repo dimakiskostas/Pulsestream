@@ -2,6 +2,7 @@
 
     pulsestream api          serve the API; the ingestion pipeline runs inside it
     pulsestream capture      record live events to a JSONL fixture for replay
+    pulsestream replay       rebuild a DuckDB file from the Parquet lake
 
 Each later phase adds a sub-command here instead of another loose script.
 Heavy imports happen inside the handlers so ``pulsestream --help`` stays instant
@@ -13,8 +14,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 from pulsestream import __version__
+
+
+def _utc(text: str) -> datetime:
+    """Parse an ISO-8601 timestamp; naive input is taken as UTC."""
+    value = datetime.fromisoformat(text)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,6 +41,13 @@ def build_parser() -> argparse.ArgumentParser:
     cap = sub.add_parser("capture", help="record N live events to a JSONL fixture for replay")
     cap.add_argument("-n", "--count", type=int, default=500)
     cap.add_argument("-o", "--output", default="tests/fixtures/sample_events.jsonl")
+
+    rep = sub.add_parser("replay", help="rebuild a DuckDB file from the Parquet lake")
+    rep.add_argument("--lake", default="data/raw", help="lake root (PULSE_LAKE_ROOT)")
+    rep.add_argument("--db", default="replay.duckdb", help="target DuckDB file (created/extended)")
+    rep.add_argument("--since", type=_utc, default=None, help="ISO timestamp, inclusive (UTC)")
+    rep.add_argument("--until", type=_utc, default=None, help="ISO timestamp, exclusive (UTC)")
+    rep.add_argument("--batch-size", type=int, default=500)
     return parser
 
 
@@ -52,9 +67,23 @@ def cmd_capture(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_replay(args: argparse.Namespace) -> int:
+    from pulsestream.replay import replay
+
+    report = asyncio.run(
+        replay(args.lake, args.db, since=args.since, until=args.until, batch_size=args.batch_size)
+    )
+    print(
+        f"replayed {report.raw} raw events from {args.lake}: {report.kept} kept, "
+        f"{report.rows} rows in {args.db}, {report.buckets} minute buckets aggregated"
+    )
+    return 0
+
+
 COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "api": cmd_api,
     "capture": cmd_capture,
+    "replay": cmd_replay,
 }
 
 

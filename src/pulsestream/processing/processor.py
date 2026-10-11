@@ -28,6 +28,8 @@ class StreamProcessor:
     def __init__(self, con: duckdb.DuckDBPyConnection, raw_store: RawStore | None = None) -> None:
         self._con = con
         self._raw_store = raw_store
+        self.raw_total = 0  # running totals since start (replay reports, metrics later)
+        self.kept_total = 0
 
     def process(self, raws: list[RawEvent]) -> BatchResult:
         if self._raw_store is not None:
@@ -36,5 +38,7 @@ class StreamProcessor:
             self._raw_store.write_batch(raws)
         events = [e for e in (WikiEvent.from_raw(r) for r in raws) if e is not None]
         write_batch(self._con, events)
+        self.raw_total += len(raws)
+        self.kept_total += len(events)
         log.debug("batch.processed", raw=len(raws), kept=len(events))
         return BatchResult(raw=len(raws), kept=len(events))

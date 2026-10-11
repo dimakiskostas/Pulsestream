@@ -36,3 +36,16 @@ class TimeseriesResponse(BaseModel):
     bucket: Bucket
     minutes: int
     points: list[TimeseriesPoint] = []
+
+
+class LakeStats(BaseModel):
+    """The Parquet raw store as seen from the filesystem and from DuckDB."""
+
+    enabled: bool
+    root: str | None
+    files: int
+    partitions: int
+    bytes: int
+    rows: int
+    first_received_at: datetime | None
+    last_received_at: datetime | None

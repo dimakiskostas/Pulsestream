@@ -6,6 +6,7 @@ writes are idempotent (``ON CONFLICT DO NOTHING``): replaying a window or
 re-delivering a batch after a crash never produces duplicate rows (D2).
 """
 
+from datetime import datetime
 from pathlib import Path
 
 import duckdb
@@ -44,6 +45,44 @@ def connect(path: str | Path = ":memory:", *, read_only: bool = False) -> duckdb
     if not read_only:
         init_db(con)
     return con
+
+
+def _sql_literal(text: str) -> str:
+    return text.replace("'", "''")
+
+
+def ensure_lake_view(con: duckdb.DuckDBPyConnection, glob: str) -> None:
+    """Expose the Parquet lake as the ``raw_events`` view.
+
+    DuckDB evaluates the glob at query time, so files added or compacted later are
+    picked up automatically. ``dt`` and ``hour`` are derived from ``received_at``
+    rather than read as hive partition columns: the directories are themselves
+    derived from ``received_at`` (UTC), so the values are identical, and DuckDB
+    1.5.5 raises an internal error when aggregating hive columns over a glob that
+    matches exactly one file. Filters on ``received_at`` are still pushed down to
+    Parquet row-group statistics. The view can only be created once at least one
+    file exists (DuckDB binds the query when the view is defined and errors on an
+    empty glob).
+    """
+    con.execute(
+        "CREATE OR REPLACE VIEW raw_events AS "
+        "SELECT *, CAST(received_at AS DATE) AS dt, hour(received_at) AS hour "
+        f"FROM read_parquet('{_sql_literal(glob)}', hive_partitioning=false)"
+    )
+
+
+def lake_row_stats(
+    con: duckdb.DuckDBPyConnection, glob: str
+) -> tuple[int, datetime | None, datetime | None]:
+    """Row count and received_at span of the lake, straight from the Parquet files."""
+    row = con.execute(
+        "SELECT count(*), min(received_at), max(received_at) "
+        f"FROM read_parquet('{_sql_literal(glob)}', hive_partitioning=false)"
+    ).fetchone()
+    if row is None:
+        return 0, None, None
+    count, first, last = row
+    return int(count), first, last
 
 
 def write_batch(con: duckdb.DuckDBPyConnection, batch: list[WikiEvent]) -> None:

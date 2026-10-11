@@ -89,9 +89,17 @@ async def test_timeseries_rejects_unknown_bucket_and_bad_minutes(client: httpx.A
 async def test_openapi_documents_the_response_models(client: httpx.AsyncClient) -> None:
     schema = (await client.get("/openapi.json")).json()
     assert schema["info"]["title"] == "PulseStream"
-    assert {"HealthStatus", "StatsLatest", "TimeseriesResponse"} <= set(
+    assert {"HealthStatus", "StatsLatest", "TimeseriesResponse", "LakeStats"} <= set(
         schema["components"]["schemas"]
     )
+
+
+async def test_lake_reports_files_rows_and_span(client: httpx.AsyncClient) -> None:
+    body = (await client.get("/lake")).json()
+    assert body["enabled"] is True and body["root"].endswith("raw")
+    assert body["files"] >= 1 and body["partitions"] >= 1 and body["bytes"] > 0
+    assert body["rows"] == N_EVENTS + 1, "the dropped categorize event is in the lake"
+    assert body["first_received_at"] <= body["last_received_at"]
 
 
 async def test_lifespan_shutdown_flushes_and_closes_cleanly(tmp_path: Path) -> None:
@@ -130,5 +138,9 @@ async def test_lake_can_be_disabled(tmp_path: Path) -> None:
     async with app.router.lifespan_context(app):
         await asyncio.wait_for(app.state.producer, timeout=5)
         await asyncio.sleep(0.2)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            body = (await c.get("/lake")).json()
+    assert body["enabled"] is False and body["files"] == 0 and body["rows"] == 0
     assert app.state.raw_store is None
     assert not (tmp_path / "raw").exists()

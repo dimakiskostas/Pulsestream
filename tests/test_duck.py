@@ -3,7 +3,15 @@ from pathlib import Path
 
 import duckdb
 
-from pulsestream.storage.duck import connect, init_db, write_batch
+from pulsestream.models import RawEvent
+from pulsestream.storage.duck import (
+    connect,
+    ensure_lake_view,
+    init_db,
+    lake_row_stats,
+    write_batch,
+)
+from pulsestream.storage.parquet import ParquetRawStore
 from tests.factories import create_WikiEvent
 
 
@@ -63,6 +71,24 @@ def test_timestamps_come_back_in_utc(con: duckdb.DuckDBPyConnection):
     assert got == ts
     assert got.utcoffset() == timedelta(0)
     assert con.execute("SELECT current_setting('TimeZone')").fetchone() == ("UTC",)
+
+
+def test_lake_view_exposes_parquet_rows_and_partition_columns(
+    con: duckdb.DuckDBPyConnection, tmp_path: Path
+):
+    store = ParquetRawStore(tmp_path / "raw")
+    ts = datetime(2026, 10, 11, 10, 30, tzinfo=UTC)
+    store.write_batch([RawEvent(source="t", received_at=ts, schema_version=1, raw_payload="{}")])
+
+    ensure_lake_view(con, store.glob)
+
+    assert con.execute("SELECT count(*), min(dt), min(hour) FROM raw_events").fetchone() == (
+        1,
+        ts.date(),
+        10,
+    )
+    assert lake_row_stats(con, store.glob) == (1, ts, ts)
+    ensure_lake_view(con, store.glob)  # CREATE OR REPLACE: calling it again is harmless
 
 
 def test_connect_creates_a_file_database_and_reopens_read_only(tmp_path: Path):

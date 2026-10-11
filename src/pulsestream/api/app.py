@@ -17,6 +17,7 @@ from pulsestream import __version__
 from pulsestream.api.schemas import (
     Bucket,
     HealthStatus,
+    LakeStats,
     PipelineStatus,
     StatsLatest,
     TaskState,
@@ -31,7 +32,7 @@ from pulsestream.processing.processor import StreamProcessor
 from pulsestream.sources.base import EventSource
 from pulsestream.sources.fake import FakeSource, load_fixture
 from pulsestream.sources.wikimedia import WikimediaSource
-from pulsestream.storage.duck import connect
+from pulsestream.storage.duck import connect, ensure_lake_view, lake_row_stats
 from pulsestream.storage.parquet import ParquetRawStore
 
 BUCKET_INTERVALS: dict[Bucket, str] = {
@@ -137,6 +138,32 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
         ).fetchall()
         points = [TimeseriesPoint(time=ts, count=n) for ts, n in rows]
         return TimeseriesResponse(bucket=bucket, minutes=minutes, points=points)
+
+    @app.get("/lake", response_model=LakeStats)
+    async def lake(request: Request) -> LakeStats:
+        """The raw store: files on disk and rows as DuckDB counts them through the view."""
+        store: ParquetRawStore | None = request.app.state.raw_store
+        if store is None:
+            return LakeStats(
+                enabled=False, root=None, files=0, partitions=0, bytes=0, rows=0,
+                first_received_at=None, last_received_at=None,
+            )  # fmt: skip
+        files = store.files()
+        rows, first, last = 0, None, None
+        if files:
+            con: duckdb.DuckDBPyConnection = request.app.state.con
+            ensure_lake_view(con, store.glob)
+            rows, first, last = lake_row_stats(con, store.glob)
+        return LakeStats(
+            enabled=True,
+            root=str(store.root),
+            files=len(files),
+            partitions=len(store.partitions()),
+            bytes=sum(f.stat().st_size for f in files),
+            rows=rows,
+            first_received_at=first,
+            last_received_at=last,
+        )
 
     return app
 

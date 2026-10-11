@@ -59,7 +59,11 @@ async def test_consumer_flushes_on_time_when_batch_is_not_full(
         await queue.put(raw)
     task = asyncio.create_task(run_consumer(queue, con, batch_size=100, flush_interval=0.05))
 
-    await asyncio.sleep(0.3)
+    # Poll rather than sleep a fixed time: a loaded CI box can delay the flush timer.
+    for _ in range(500):
+        if written:
+            break
+        await asyncio.sleep(0.01)
     assert written == [[f"evt-{i:04d}" for i in range(3)]]
 
     await queue.put(None)

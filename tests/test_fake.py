@@ -1,4 +1,3 @@
-import time
 from pathlib import Path
 
 from pulsestream.models import RawEvent
@@ -27,9 +26,20 @@ async def test_fake_source_is_finite_and_empty_is_fine() -> None:
 
 
 async def test_fake_source_paces_events_when_delay_is_set() -> None:
-    started = time.monotonic()
-    assert len(await collect(FakeSource(make_raws(3), delay=0.02))) == 3
-    assert time.monotonic() - started >= 0.05
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    assert len(await collect(FakeSource(make_raws(3), delay=0.25, sleep=fake_sleep))) == 3
+    assert slept == [0.25, 0.25, 0.25]
+
+
+async def test_fake_source_does_not_sleep_without_delay() -> None:
+    async def explode(seconds: float) -> None:
+        raise AssertionError("sleep must not be called when delay=0")
+
+    assert len(await collect(FakeSource(make_raws(2), sleep=explode))) == 2
 
 
 def test_load_fixture_round_trips_raw_events(tmp_path: Path) -> None:

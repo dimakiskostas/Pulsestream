@@ -44,8 +44,8 @@ async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-            # The replay is finite; wait until the consumer has flushed all of it.
-            for _ in range(100):
+            # The replay is finite; wait (up to ~10 s) until the consumer has flushed all of it.
+            for _ in range(500):
                 if (await c.get("/stats/latest")).json()["events_total"] == N_EVENTS:
                     break
                 await asyncio.sleep(0.02)

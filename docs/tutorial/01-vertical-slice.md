@@ -155,7 +155,9 @@ starts in the lifespan, so the tests enter it explicitly:
 
 ```python
 async with app.router.lifespan_context(app):
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
         ...
 ```
 

@@ -7,14 +7,18 @@ from pydantic import BaseModel, Field
 
 
 class RawEvent(BaseModel):
+    """Source-agnostic envelope. Never changes between sources."""
+
     ingest_id: UUID = Field(default_factory=uuid4)
     source: str
     received_at: datetime
     schema_version: int
-    raw_payload: str
+    raw_payload: str  # keep the original; parse later
 
 
 class WikiEvent(BaseModel):
+    """Validated, source-specific domain event (see docs/decisions/0001 for the filter)."""
+
     event_id: str
     entity: str
     event_ts: datetime
@@ -63,12 +67,3 @@ class WikiEvent(BaseModel):
             title=title,
             namespace=namespace,
         )
-
-
-class TimeseriesPoint(BaseModel):
-    time: datetime
-    count: int
-
-
-class TimeseriesResponse(BaseModel):
-    points: list[TimeseriesPoint] = []

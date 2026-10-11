@@ -94,6 +94,19 @@ async def test_openapi_documents_the_response_models(client: httpx.AsyncClient) 
     )
 
 
+async def test_jobs_are_scheduled_and_can_be_run_on_demand(client: httpx.AsyncClient) -> None:
+    body = (await client.get("/jobs")).json()
+    assert body["scheduler_enabled"] is True
+    assert [j["name"] for j in body["jobs"]] == ["refresh_aggregates", "compact_lake"]
+    assert all(j["runs"] == 0 and j["next_run_at"] is not None for j in body["jobs"])
+
+    run = (await client.post("/jobs/refresh_aggregates/run")).json()
+    assert (run["runs"], run["failures"], run["last_error"]) == (1, 0, None)
+    assert run["last_result"].endswith("buckets")
+
+    assert (await client.post("/jobs/nope/run")).status_code == 404
+
+
 async def test_lake_reports_files_rows_and_span(client: httpx.AsyncClient) -> None:
     body = (await client.get("/lake")).json()
     assert body["enabled"] is True and body["root"].endswith("raw")

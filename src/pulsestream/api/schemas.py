@@ -49,3 +49,19 @@ class LakeStats(BaseModel):
     rows: int
     first_received_at: datetime | None
     last_received_at: datetime | None
+
+
+class JobStatus(BaseModel):
+    name: str
+    runs: int
+    failures: int
+    last_started_at: datetime | None
+    last_duration_seconds: float | None
+    last_result: str | None
+    last_error: str | None
+    next_run_at: datetime | None  # None when the scheduler is disabled
+
+
+class JobsResponse(BaseModel):
+    scheduler_enabled: bool
+    jobs: list[JobStatus]

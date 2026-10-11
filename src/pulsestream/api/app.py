@@ -11,12 +11,14 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import duckdb
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 
 from pulsestream import __version__
 from pulsestream.api.schemas import (
     Bucket,
     HealthStatus,
+    JobsResponse,
+    JobStatus,
     LakeStats,
     PipelineStatus,
     StatsLatest,
@@ -29,6 +31,8 @@ from pulsestream.config import settings as default_settings
 from pulsestream.models import RawEvent
 from pulsestream.pipeline import run_consumer, run_producer
 from pulsestream.processing.processor import StreamProcessor
+from pulsestream.scheduler.jobs import JOB_NAMES, Maintenance
+from pulsestream.scheduler.runner import build_scheduler
 from pulsestream.sources.base import EventSource
 from pulsestream.sources.fake import FakeSource, load_fixture
 from pulsestream.sources.wikimedia import WikimediaSource
@@ -72,16 +76,35 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
         consumer = asyncio.create_task(
             run_consumer(queue, processor, cfg.batch_size, cfg.flush_interval), name="consumer"
         )
+        maintenance = Maintenance(
+            con,
+            raw_store,
+            aggregate_window_minutes=cfg.aggregate_window_minutes,
+            compaction_grace_seconds=cfg.compaction_grace_seconds,
+            compaction_min_files=cfg.compaction_min_files,
+        )
+        scheduler = None
+        if cfg.scheduler_enabled:
+            scheduler = build_scheduler(
+                maintenance,
+                aggregate_interval_seconds=cfg.aggregate_interval_seconds,
+                compaction_interval_seconds=cfg.compaction_interval_seconds,
+            )
+            scheduler.start()
         app.state.con = con
         app.state.raw_store = raw_store
         app.state.processor = processor
+        app.state.maintenance = maintenance
+        app.state.scheduler = scheduler
         app.state.queue = queue
         app.state.producer = producer
         app.state.consumer = consumer
         try:
             yield  # ---- app runs ----
         finally:
-            # Stop the producer first, then let the consumer flush what is buffered.
+            # Stop the clock first, then the producer, then let the consumer flush.
+            if scheduler is not None:
+                scheduler.shutdown(wait=False)
             producer.cancel()
             await asyncio.gather(producer, return_exceptions=True)
             if not consumer.done():
@@ -164,6 +187,37 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
             first_received_at=first,
             last_received_at=last,
         )
+
+    def job_status(request: Request, name: str) -> JobStatus:
+        run = request.app.state.maintenance.status[name]
+        scheduler = request.app.state.scheduler
+        job = scheduler.get_job(name) if scheduler is not None else None
+        return JobStatus(
+            name=run.name,
+            runs=run.runs,
+            failures=run.failures,
+            last_started_at=run.last_started_at,
+            last_duration_seconds=run.last_duration_seconds,
+            last_result=run.last_result,
+            last_error=run.last_error,
+            next_run_at=job.next_run_time if job is not None else None,
+        )
+
+    @app.get("/jobs", response_model=JobsResponse)
+    async def jobs(request: Request) -> JobsResponse:
+        """Periodic maintenance jobs: schedule and the outcome of their last run."""
+        return JobsResponse(
+            scheduler_enabled=request.app.state.scheduler is not None,
+            jobs=[job_status(request, name) for name in JOB_NAMES],
+        )
+
+    @app.post("/jobs/{name}/run", response_model=JobStatus)
+    async def run_job(request: Request, name: str) -> JobStatus:
+        """Run a maintenance job now (demos, tests, catching up after downtime)."""
+        if name not in JOB_NAMES:
+            raise HTTPException(status_code=404, detail=f"unknown job {name!r}")
+        await asyncio.to_thread(request.app.state.maintenance.run, name)
+        return job_status(request, name)
 
     return app
 

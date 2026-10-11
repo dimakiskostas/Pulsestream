@@ -4,6 +4,7 @@
     pulsestream capture      record live events to a JSONL fixture for replay
     pulsestream replay       rebuild a DuckDB file from the Parquet lake
     pulsestream dashboard    run the Streamlit dashboard against a running API
+    pulsestream check        run the data-quality gates on a database and lake
 
 Each later phase adds a sub-command here instead of another loose script.
 Heavy imports happen inside the handlers so ``pulsestream --help`` stays instant
@@ -57,6 +58,11 @@ def build_parser() -> argparse.ArgumentParser:
     dash = sub.add_parser("dashboard", help="run the Streamlit dashboard (reads the API only)")
     dash.add_argument("--api-url", default=os.environ.get("PULSE_API_URL", "http://127.0.0.1:8000"))
     dash.add_argument("--port", type=int, default=8501)
+
+    chk = sub.add_parser("check", help="run the pandera data-quality gates on a DB and lake")
+    chk.add_argument("--db", default="pulsestream.duckdb")
+    chk.add_argument("--lake", default="data/raw")
+    chk.add_argument("--no-lake", action="store_true", help="skip the Parquet lake")
     return parser
 
 
@@ -111,11 +117,37 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     return subprocess.call(dashboard_command(args.api_url, args.port), env=env)
 
 
+def cmd_check(args: argparse.Namespace) -> int:
+    import pandera.polars as pa
+
+    from pulsestream.quality import check
+    from pulsestream.storage.duck import connect
+    from pulsestream.storage.parquet import ParquetRawStore
+
+    con = connect(args.db, read_only=True)
+    try:
+        store = None if args.no_lake else ParquetRawStore(args.lake)
+        report = check(con, store)
+    except pa.errors.SchemaErrors as exc:
+        failures = exc.failure_cases.select("column", "check").unique()
+        name = exc.schema.name if exc.schema else "schema"
+        print(f"FAILED: {name} has {failures.height} violations")
+        for column, name in failures.iter_rows():
+            print(f"  {column or '<frame>'}: {name}")
+        return 1
+    finally:
+        con.close()
+    for name, rows in report.rows.items():
+        print(f"{name}: {rows} rows ok")
+    return 0
+
+
 COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "api": cmd_api,
     "capture": cmd_capture,
     "replay": cmd_replay,
     "dashboard": cmd_dashboard,
+    "check": cmd_check,
 }
 
 

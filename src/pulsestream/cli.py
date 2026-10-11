@@ -3,6 +3,7 @@
     pulsestream api          serve the API; the ingestion pipeline runs inside it
     pulsestream capture      record live events to a JSONL fixture for replay
     pulsestream replay       rebuild a DuckDB file from the Parquet lake
+    pulsestream dashboard    run the Streamlit dashboard against a running API
 
 Each later phase adds a sub-command here instead of another loose script.
 Heavy imports happen inside the handlers so ``pulsestream --help`` stays instant
@@ -13,8 +14,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
+import subprocess
+import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 
 from pulsestream import __version__
 
@@ -48,6 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
     rep.add_argument("--since", type=_utc, default=None, help="ISO timestamp, inclusive (UTC)")
     rep.add_argument("--until", type=_utc, default=None, help="ISO timestamp, exclusive (UTC)")
     rep.add_argument("--batch-size", type=int, default=500)
+
+    dash = sub.add_parser("dashboard", help="run the Streamlit dashboard (reads the API only)")
+    dash.add_argument("--api-url", default=os.environ.get("PULSE_API_URL", "http://127.0.0.1:8000"))
+    dash.add_argument("--port", type=int, default=8501)
     return parser
 
 
@@ -80,10 +89,33 @@ def cmd_replay(args: argparse.Namespace) -> int:
     return 0
 
 
+def dashboard_command(api_url: str, port: int) -> list[str]:
+    script = Path(__file__).with_name("dashboard") / "app.py"
+    return [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(script),
+        "--server.port",
+        str(port),
+        "--server.headless",
+        "true",
+        "--browser.gatherUsageStats",
+        "false",
+    ]
+
+
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    env = {**os.environ, "PULSE_API_URL": args.api_url}
+    return subprocess.call(dashboard_command(args.api_url, args.port), env=env)
+
+
 COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "api": cmd_api,
     "capture": cmd_capture,
     "replay": cmd_replay,
+    "dashboard": cmd_dashboard,
 }
 
 

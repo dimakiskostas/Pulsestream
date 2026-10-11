@@ -28,7 +28,7 @@ def build_scheduler(
     for name, seconds in intervals.items():
         scheduler.add_job(
             maintenance.run,
-            IntervalTrigger(seconds=seconds),
+            IntervalTrigger(seconds=seconds, timezone="UTC"),  # trigger tz defaults to local
             args=[name],
             id=name,
             name=name,

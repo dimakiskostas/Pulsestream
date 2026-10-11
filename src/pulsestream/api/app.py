@@ -262,6 +262,7 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
         run = request.app.state.maintenance.status[name]
         scheduler = request.app.state.scheduler
         job = scheduler.get_job(name) if scheduler is not None else None
+        next_run = job.next_run_time if job is not None else None
         return JobStatus(
             name=run.name,
             runs=run.runs,
@@ -270,7 +271,7 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
             last_duration_seconds=run.last_duration_seconds,
             last_result=run.last_result,
             last_error=run.last_error,
-            next_run_at=job.next_run_time if job is not None else None,
+            next_run_at=next_run.astimezone(UTC) if next_run is not None else None,
         )
 
     @app.get("/jobs", response_model=JobsResponse)

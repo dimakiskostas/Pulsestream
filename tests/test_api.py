@@ -137,6 +137,7 @@ async def test_jobs_are_scheduled_and_can_be_run_on_demand(client: httpx.AsyncCl
     assert body["scheduler_enabled"] is True
     assert [j["name"] for j in body["jobs"]] == ["refresh_aggregates", "compact_lake"]
     assert all(j["runs"] == 0 and j["next_run_at"] is not None for j in body["jobs"])
+    assert all(j["next_run_at"].endswith("Z") for j in body["jobs"]), "UTC, like every timestamp"
 
     run = (await client.post("/jobs/refresh_aggregates/run")).json()
     assert (run["runs"], run["failures"], run["last_error"]) == (1, 0, None)

@@ -94,7 +94,7 @@ jobs:
       - name: Smoke test the image
         run: docker run --rm ${{ fromJSON(steps.meta.outputs.json).tags[0] }} --version
       - name: Scan the image (trivy)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
           severity: CRITICAL,HIGH

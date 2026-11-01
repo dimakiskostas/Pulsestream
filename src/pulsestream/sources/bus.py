@@ -12,6 +12,7 @@ redelivery while a dead consumer costs the pipeline (ADR 0017).
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
+from datetime import datetime
 from uuid import UUID
 
 import structlog
@@ -64,3 +65,21 @@ class BusSource:
             return 0
         self.acked_total += len(ids)
         return len(ids)
+
+
+class BusReplaySource:
+    """Replay a ``[since, until)`` window of the stream through the pipeline, outside any
+    consumer group: nothing is delivered, pending or acknowledged, the stream is only read.
+    The window is by publish time (the entry id), the same clock as ``received_at`` on the
+    ingest side within a few milliseconds."""
+
+    def __init__(
+        self, bus: EventBus, *, since: datetime | None = None, until: datetime | None = None
+    ) -> None:
+        self._bus = bus
+        self._since = since
+        self._until = until
+
+    async def stream(self) -> AsyncIterator[RawEvent]:
+        async for delivery in self._bus.replay(since=self._since, until=self._until):
+            yield delivery.event

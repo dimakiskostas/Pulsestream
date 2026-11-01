@@ -38,10 +38,22 @@ SOURCE_RECONNECTS = Counter(
 JOB_RUNS = Counter(
     "pulsestream_job_runs_total", "Maintenance job runs by outcome", ["job", "outcome"]
 )
+BUS_PUBLISHED = Counter(
+    "pulsestream_bus_published_total", "Events appended to the bus by the ingest service"
+)
+BUS_REDELIVERIES = Counter(
+    "pulsestream_bus_redeliveries_total",
+    "Events delivered a second time: re-read after a restart or claimed from a dead consumer",
+)
+BUS_STREAM_LENGTH = Gauge("pulsestream_bus_stream_length", "Entries retained in the bus stream")
+BUS_PENDING = Gauge(
+    "pulsestream_bus_pending", "Events delivered to the processing group and not yet acknowledged"
+)
+BUS_LAG = Gauge("pulsestream_bus_lag", "Entries the processing group has not been handed yet")
 
 for _stage in ("raw", "kept"):
     INGEST_EVENTS.labels(stage=_stage)
-for _stage in ("source", "processing", "job"):
+for _stage in ("source", "processing", "job", "bus"):
     ERRORS.labels(stage=_stage)
 for _metric in ("edit_rate", "byte_delta"):
     for _severity in ("warn", "high", "critical"):

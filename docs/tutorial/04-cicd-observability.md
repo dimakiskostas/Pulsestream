@@ -6,7 +6,7 @@
 > pipeline that tests, builds, scans and publishes the images and deploys a
 > tagged release.
 
-Branch: `phase-4-cicd-observability`, 9 commits on top of Phase 3. Steps
+Branch: `phase-4-cicd-observability`, 10 commits on top of Phase 3. Steps
 below are the commits in order (`git log --oneline main..phase-4-cicd-observability`
 once Phase 3 is merged).
 
@@ -188,6 +188,14 @@ This chapter, the three decision records, and
 (probes, every metric and what it means, the alert rules, reading the JSON
 logs), the one-time server and GitHub setup for the deploy, releasing,
 rolling back, backing up the volume, troubleshooting.
+
+### Step: *ci: the trivy action's tags carry a v prefix*
+
+The first run of the new workflow failed in "Set up job" of both image jobs:
+`Unable to resolve action aquasecurity/trivy-action@0.36.0`. The action's
+releases are tagged `v0.36.0`, and the runner resolves every action a job
+uses before its first step, so a wrong version fails the job without running
+anything. The `test` jobs were green; one character fixed the rest.
 
 ## Running it
 

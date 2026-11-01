@@ -235,7 +235,11 @@ def create_app(
         state = request.app.state
         if state.bus is None:
             return BusStatus(mode="none")
-        stats = await state.bus.stats(cfg.bus_group)
+        try:
+            stats = await state.bus.stats(cfg.bus_group)
+        except Exception as exc:
+            detail = f"bus unreachable: {type(exc).__name__}: {exc}"
+            raise HTTPException(status_code=503, detail=detail) from exc
         src: BusSource | None = state.bus_source
         return BusStatus(
             mode="redis",

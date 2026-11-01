@@ -90,13 +90,19 @@ async def test_ready_while_publishing_and_not_ready_without_the_bus() -> None:
             async def ping(self) -> bool:
                 return False
 
+            async def stats(self, group: str) -> None:
+                raise redis_exceptions.ConnectionError("broker away")
+
         state = client.app_ref.state  # type: ignore[attr-defined]
         real, state.bus = state.bus, Gone()
         try:
             response = await client.get("/health/ready")
+            stats_response = await client.get("/stats")
         finally:
             state.bus = real
         assert response.status_code == 503 and response.json()["checks"]["bus"] is False
+        assert stats_response.status_code == 503
+        assert stats_response.json()["detail"].startswith("bus unreachable: ConnectionError")
         assert (await client.get("/health/live")).json() == {"status": "alive"}
 
 

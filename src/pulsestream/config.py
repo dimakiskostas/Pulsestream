@@ -47,8 +47,8 @@ class Settings(BaseSettings):
     byte_delta_enabled: bool = True
     byte_delta_window: int = 200  # recent edits per entity kept as the size reference
     byte_delta_warmup: int = 50
-    byte_delta_threshold: float = 3.5  # modified z-score (median/MAD) threshold
-    byte_delta_min_bytes: int = 1000  # smaller edits are never findings
+    byte_delta_threshold: float = 8.0  # modified z-score (median/MAD) threshold
+    byte_delta_min_bytes: int = 50_000  # smaller edits are never findings (calibrated live)
 
     # --- scheduler (periodic maintenance) -------------------------------------
     scheduler_enabled: bool = True

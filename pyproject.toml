@@ -1,6 +1,6 @@
 [project]
 name = "pulsestream"
-version = "0.1.0"
+version = "1.0.0"
 description = "A near-real-time event analytics pipeline with embedded anomaly detection featuring modern Python tooling (DuckDB, FastAPI, uv) and full CI/CD deployment."
 readme = "README.md"
 authors = [

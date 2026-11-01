@@ -8,15 +8,18 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "apscheduler>=3.11.3",
     "duckdb>=1.5.5",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "httpx-sse>=0.4.3",
+    "polars>=2.0.0",
     "prometheus-client>=0.26.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
     # DuckDB imports pytz lazily to return tz-aware datetimes for TIMESTAMPTZ columns.
     "pytz>=2026.5",
+    "streamlit>=1.65.0",
     "structlog>=26.1.0",
     "uvicorn>=0.52.1",
 ]
@@ -31,7 +34,7 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "mypy>=2.3.0",
-    "pandera>=0.32.1",
+    "pandera[polars]>=0.32.1",
     "pre-commit>=4.6.1",
     "pre-commit-hooks>=6.0.0",
     "pytest>=9.1.1",
@@ -61,3 +64,8 @@ strict = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = "--cov=pulsestream --cov-report=term-missing"
+
+[[tool.mypy.overrides]]
+# APScheduler 3.x ships no type hints (no py.typed, no stubs on typeshed).
+module = ["apscheduler.*"]
+ignore_missing_imports = true

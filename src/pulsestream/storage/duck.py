@@ -6,11 +6,16 @@ writes are idempotent (``ON CONFLICT DO NOTHING``): replaying a window or
 re-delivering a batch after a crash never produces duplicate rows (D2).
 """
 
+import asyncio
+from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import duckdb
 
 from pulsestream.models import WikiEvent
+from pulsestream.storage.aggregates import init_aggregates
 
 
 def init_db(conn: duckdb.DuckDBPyConnection) -> None:
@@ -29,21 +34,83 @@ def init_db(conn: duckdb.DuckDBPyConnection) -> None:
         )
         """
     )
+    init_aggregates(conn)
 
 
 def connect(path: str | Path = ":memory:", *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
-    """Open DuckDB with a UTC session and (for writers) the schema in place.
+    """Open DuckDB with a UTC time zone and (for writers) the schema in place.
 
-    DuckDB renders TIMESTAMPTZ values in the connection's ``TimeZone`` setting, which
-    defaults to the machine's local zone (Europe/Athens on the development box). Pinning
-    the session to UTC means every datetime that leaves the database is UTC-aware,
-    matching the project convention that all timestamps are UTC (HLD §8).
+    DuckDB renders TIMESTAMPTZ values in the ``TimeZone`` setting, which defaults to
+    the machine's local zone (Europe/Athens on the development box). Pinning it to
+    UTC means every datetime that leaves the database is UTC-aware, matching the
+    project convention that all timestamps are UTC (HLD §8). It is set GLOBAL: a
+    plain ``SET`` is per connection and ``con.cursor()`` (used by every worker
+    thread) would start from the local zone again.
     """
     con = duckdb.connect(str(path), read_only=read_only)
-    con.execute("SET TimeZone = 'UTC'")
+    con.execute("SET GLOBAL TimeZone = 'UTC'")
     if not read_only:
         init_db(con)
     return con
+
+
+async def aquery(
+    con: duckdb.DuckDBPyConnection, sql: str, params: Sequence[object] = ()
+) -> list[tuple[Any, ...]]:
+    """Run a read query on a worker thread with its own cursor.
+
+    DuckDB calls are synchronous; on the event loop a slow query would stall ingestion
+    and every other request. ``con.cursor()`` gives the worker thread a connection of
+    its own to the same database (DuckDB wants one cursor per thread), and it sees
+    everything the consumer has committed.
+    """
+
+    def run() -> list[tuple[Any, ...]]:
+        cur = con.cursor()
+        try:
+            return cur.execute(sql, list(params)).fetchall()
+        finally:
+            cur.close()
+
+    return await asyncio.to_thread(run)
+
+
+def _sql_literal(text: str) -> str:
+    return text.replace("'", "''")
+
+
+def ensure_lake_view(con: duckdb.DuckDBPyConnection, glob: str) -> None:
+    """Expose the Parquet lake as the ``raw_events`` view.
+
+    DuckDB evaluates the glob at query time, so files added or compacted later are
+    picked up automatically. ``dt`` and ``hour`` are derived from ``received_at``
+    rather than read as hive partition columns: the directories are themselves
+    derived from ``received_at`` (UTC), so the values are identical, and DuckDB
+    1.5.5 raises an internal error when aggregating hive columns over a glob that
+    matches exactly one file. Filters on ``received_at`` are still pushed down to
+    Parquet row-group statistics. The view can only be created once at least one
+    file exists (DuckDB binds the query when the view is defined and errors on an
+    empty glob).
+    """
+    con.execute(
+        "CREATE OR REPLACE VIEW raw_events AS "
+        "SELECT *, CAST(received_at AS DATE) AS dt, hour(received_at) AS hour "
+        f"FROM read_parquet('{_sql_literal(glob)}', hive_partitioning=false)"
+    )
+
+
+def lake_row_stats(
+    con: duckdb.DuckDBPyConnection, glob: str
+) -> tuple[int, datetime | None, datetime | None]:
+    """Row count and received_at span of the lake, straight from the Parquet files."""
+    row = con.execute(
+        "SELECT count(*), min(received_at), max(received_at) "
+        f"FROM read_parquet('{_sql_literal(glob)}', hive_partitioning=false)"
+    ).fetchone()
+    if row is None:
+        return 0, None, None
+    count, first, last = row
+    return int(count), first, last
 
 
 def write_batch(con: duckdb.DuckDBPyConnection, batch: list[WikiEvent]) -> None:

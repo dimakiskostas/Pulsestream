@@ -36,3 +36,59 @@ class TimeseriesResponse(BaseModel):
     bucket: Bucket
     minutes: int
     points: list[TimeseriesPoint] = []
+
+
+class LakeStats(BaseModel):
+    """The Parquet raw store as seen from the filesystem and from DuckDB."""
+
+    enabled: bool
+    root: str | None
+    files: int
+    partitions: int
+    bytes: int
+    rows: int
+    first_received_at: datetime | None
+    last_received_at: datetime | None
+
+
+class AggPoint(BaseModel):
+    bucket_ts: datetime
+    entity: str  # "*" when all entities are combined
+    count: int
+    bot_count: int
+    avg_value: float | None  # mean byte_delta (count-weighted when combined)
+    max_value: int | None
+    anomaly_count: int
+
+
+class AggregatesResponse(BaseModel):
+    minutes: int
+    entity: str | None
+    points: list[AggPoint] = []
+
+
+class EntityCount(BaseModel):
+    entity: str
+    count: int
+    bot_count: int
+
+
+class TopEntitiesResponse(BaseModel):
+    minutes: int
+    entities: list[EntityCount] = []
+
+
+class JobStatus(BaseModel):
+    name: str
+    runs: int
+    failures: int
+    last_started_at: datetime | None
+    last_duration_seconds: float | None
+    last_result: str | None
+    last_error: str | None
+    next_run_at: datetime | None  # None when the scheduler is disabled
+
+
+class JobsResponse(BaseModel):
+    scheduler_enabled: bool
+    jobs: list[JobStatus]

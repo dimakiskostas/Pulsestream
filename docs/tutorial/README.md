@@ -19,13 +19,15 @@ up along the way. The design rationale stays in the HLD
 - **One commit per step** inside a branch. Every commit passes
   `ruff check`, `ruff format --check`, `mypy src` and `pytest` on its own,
   so you can check out any commit and have a working system at that point.
-- **One merge commit per phase** into `main` (`--no-ff`), so the phase
-  boundaries stay visible:
+- **One squash commit per phase** on `main`: each phase branch is reviewed as a
+  pull request and squash-merged, so `main` reads as a list of phases while the
+  branches keep the step-by-step history. The branches are kept, not deleted,
+  after the merge:
 
 ```bash
-git log --oneline --first-parent main          # one line per phase
-git log --oneline --no-merges <merge>^1..<merge>^2   # the steps of that phase
-git checkout phase-2-storage-analytics          # the repo as it was at the end of Phase 2
+git log --oneline --first-parent main               # one line per phase
+git log --oneline main..phase-2-storage-analytics   # the steps of that phase
+git checkout phase-2-storage-analytics              # the repo as it was at the end of Phase 2
 ```
 
 Commit messages carry the "why": read them with `git log --format=full` or
@@ -37,7 +39,7 @@ Commit messages carry the "why": read them with `git log --format=full` or
 | ---------------------------------------------------- | --------- | ---------------------------- |
 | [00 Skeleton](00-skeleton.md)                        | 0         | `main` (PR #1)               |
 | [01 Vertical slice](01-vertical-slice.md)            | 1         | `phase-1-vertical-slice`     |
-| 02 Storage and analytics                             | 2         | `phase-2-storage-analytics`  |
+| [02 Storage and analytics](02-storage-analytics.md)  | 2         | `phase-2-storage-analytics`  |
 | 03 Anomaly detection v1                              | 3         | `phase-3-anomaly-detection`  |
 | 04 CI/CD and observability                           | 4         | `phase-4-cicd-observability` |
 | 05 Streaming decoupling                              | 5         | `phase-5-streaming-decoupling` |

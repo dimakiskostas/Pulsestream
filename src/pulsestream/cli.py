@@ -2,6 +2,9 @@
 
     pulsestream api          serve the API; the ingestion pipeline runs inside it
     pulsestream capture      record live events to a JSONL fixture for replay
+    pulsestream replay       rebuild a DuckDB file from the Parquet lake
+    pulsestream dashboard    run the Streamlit dashboard against a running API
+    pulsestream check        run the data-quality gates on a database and lake
 
 Each later phase adds a sub-command here instead of another loose script.
 Heavy imports happen inside the handlers so ``pulsestream --help`` stays instant
@@ -12,9 +15,20 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
+import subprocess
+import sys
 from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
 
 from pulsestream import __version__
+
+
+def _utc(text: str) -> datetime:
+    """Parse an ISO-8601 timestamp; naive input is taken as UTC."""
+    value = datetime.fromisoformat(text)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,6 +47,22 @@ def build_parser() -> argparse.ArgumentParser:
     cap = sub.add_parser("capture", help="record N live events to a JSONL fixture for replay")
     cap.add_argument("-n", "--count", type=int, default=500)
     cap.add_argument("-o", "--output", default="tests/fixtures/sample_events.jsonl")
+
+    rep = sub.add_parser("replay", help="rebuild a DuckDB file from the Parquet lake")
+    rep.add_argument("--lake", default="data/raw", help="lake root (PULSE_LAKE_ROOT)")
+    rep.add_argument("--db", default="replay.duckdb", help="target DuckDB file (created/extended)")
+    rep.add_argument("--since", type=_utc, default=None, help="ISO timestamp, inclusive (UTC)")
+    rep.add_argument("--until", type=_utc, default=None, help="ISO timestamp, exclusive (UTC)")
+    rep.add_argument("--batch-size", type=int, default=500)
+
+    dash = sub.add_parser("dashboard", help="run the Streamlit dashboard (reads the API only)")
+    dash.add_argument("--api-url", default=os.environ.get("PULSE_API_URL", "http://127.0.0.1:8000"))
+    dash.add_argument("--port", type=int, default=8501)
+
+    chk = sub.add_parser("check", help="run the pandera data-quality gates on a DB and lake")
+    chk.add_argument("--db", default="pulsestream.duckdb")
+    chk.add_argument("--lake", default="data/raw")
+    chk.add_argument("--no-lake", action="store_true", help="skip the Parquet lake")
     return parser
 
 
@@ -52,9 +82,72 @@ def cmd_capture(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_replay(args: argparse.Namespace) -> int:
+    from pulsestream.replay import replay
+
+    report = asyncio.run(
+        replay(args.lake, args.db, since=args.since, until=args.until, batch_size=args.batch_size)
+    )
+    print(
+        f"replayed {report.raw} raw events from {args.lake}: {report.kept} kept, "
+        f"{report.rows} rows in {args.db}, {report.buckets} minute buckets aggregated"
+    )
+    return 0
+
+
+def dashboard_command(api_url: str, port: int) -> list[str]:
+    script = Path(__file__).with_name("dashboard") / "app.py"
+    return [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(script),
+        "--server.port",
+        str(port),
+        "--server.headless",
+        "true",
+        "--browser.gatherUsageStats",
+        "false",
+    ]
+
+
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    env = {**os.environ, "PULSE_API_URL": args.api_url}
+    return subprocess.call(dashboard_command(args.api_url, args.port), env=env)
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    import pandera.polars as pa
+
+    from pulsestream.quality import check
+    from pulsestream.storage.duck import connect
+    from pulsestream.storage.parquet import ParquetRawStore
+
+    con = connect(args.db, read_only=True)
+    try:
+        store = None if args.no_lake else ParquetRawStore(args.lake)
+        report = check(con, store)
+    except pa.errors.SchemaErrors as exc:
+        failures = exc.failure_cases.select("column", "check").unique()
+        name = exc.schema.name if exc.schema else "schema"
+        print(f"FAILED: {name} has {failures.height} violations")
+        for column, name in failures.iter_rows():
+            print(f"  {column or '<frame>'}: {name}")
+        return 1
+    finally:
+        con.close()
+    for name, rows in report.rows.items():
+        print(f"{name}: {rows} rows ok")
+    return 0
+
+
 COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "api": cmd_api,
     "capture": cmd_capture,
+    "replay": cmd_replay,
+    "dashboard": cmd_dashboard,
+    "check": cmd_check,
 }
 
 

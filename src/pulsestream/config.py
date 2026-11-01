@@ -16,6 +16,8 @@ class Settings(BaseSettings):
 
     # --- storage -------------------------------------------------------------
     db_path: str = "pulsestream.duckdb"
+    lake_root: str = "data/raw"  # partitioned Parquet raw store (immutable, replayable)
+    lake_enabled: bool = True
 
     # --- pipeline ------------------------------------------------------------
     queue_maxsize: int = 1000  # bounded queue == backpressure knob (HLD §7)
@@ -29,6 +31,14 @@ class Settings(BaseSettings):
     stream_url: str = STREAM_URL
     user_agent: str = DEFAULT_USER_AGENT
     read_timeout: float = 60.0  # seconds without bytes before the stream counts as dead
+
+    # --- scheduler (periodic maintenance) -------------------------------------
+    scheduler_enabled: bool = True
+    aggregate_interval_seconds: int = 60  # how often agg_minutely is refreshed
+    aggregate_window_minutes: int = 180  # how far back each refresh recomputes
+    compaction_interval_seconds: int = 600  # how often the lake is compacted
+    compaction_grace_seconds: float = 120.0  # a file older than this is settled
+    compaction_min_files: int = 2  # merge a partition only with at least this many
 
 
 settings = Settings()

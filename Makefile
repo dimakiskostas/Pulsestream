@@ -1,7 +1,7 @@
 # PulseStream task runner. Every target is a thin alias over `uv run ...`, so on a
 # machine without make (Windows) you can type the underlying command instead.
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test check precommit run run-replay capture clean
+.PHONY: help install lint format typecheck test check precommit run run-replay dashboard replay capture clean
 
 help:            ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -34,6 +34,12 @@ run:             ## serve the API with the live Wikimedia pipeline inside (http:
 
 run-replay:      ## serve the API replaying the committed fixture, no network
 	PULSE_SOURCE=fake PULSE_FIXTURE_DELAY=0.05 uv run pulsestream api
+
+dashboard:       ## run the Streamlit dashboard against the API (http://127.0.0.1:8501)
+	uv run pulsestream dashboard
+
+replay:          ## rebuild replay.duckdb from the Parquet lake in data/raw
+	uv run pulsestream replay --lake data/raw --db replay.duckdb
 
 capture:         ## record 500 live events to tests/fixtures/sample_events.jsonl
 	uv run pulsestream capture -n 500

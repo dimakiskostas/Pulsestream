@@ -7,21 +7,10 @@ Near-real-time event analytics pipeline with embedded anomaly detection.
 Live edits from every Wikimedia project stream in over SSE, are validated into
 typed events, land in DuckDB in micro-batches and in a partitioned Parquet lake,
 and are served by a typed FastAPI API and a Streamlit dashboard. A statistical
-anomaly detector, Prometheus metrics, Docker/CI/CD and a broker-based split follow
-phase by phase. The design is in [`docs/hld.pdf`](docs/hld.pdf); the build is
+anomaly detector, Prometheus metrics, Docker/CI/CD and a broker-based split were
+added phase by phase. The design is in [`docs/hld.pdf`](docs/hld.pdf); the build is
 written up as a tutorial in [`docs/tutorial/`](docs/tutorial/README.md), one git
 branch per phase.
-
-## Status
-
-| Phase | Increment                                                        | State   |
-| ----- | ---------------------------------------------------------------- | ------- |
-| 0     | Skeleton: uv, Ruff, mypy (strict), pytest, pre-commit, green CI  | done    |
-| 1     | Vertical slice: live source → queue → validate → DuckDB → API    | done    |
-| 2     | Storage + analytics: Parquet lake, aggregates, scheduler, dashboard, replay, quality gates | done |
-| 3     | Anomaly detection v1: event-time windows, EWMA control band, byte-delta MAD, synthetic evaluation | done |
-| 4     | CI/CD + observability: structured logs, Prometheus metrics, probes, images, compose + Grafana, CI build/scan/publish, tag deploy | done |
-| 5     | Streaming decoupling: Redis Streams between an ingest service and the API, consumer group + acks, replay from the bus | done |
 
 ## How it works (Phase 5)
 
@@ -218,18 +207,3 @@ docs/
   decisions/                 architecture decision records (ADR 0001-0017)
   operations.md              runbook: run with Docker, what to watch, release and deploy
 ```
-
-## Reading the history
-
-`main` carries one commit per phase: each phase branch is reviewed as a pull
-request and squash-merged ("Phase 1 vertical slice (#5)", ...), so
-`git log --oneline --first-parent main` is the phase-level view. The step-by-step
-commits of a phase live on its branch, which is kept after the merge:
-
-```bash
-git log --oneline main..phase-1-vertical-slice   # the steps of Phase 1
-git checkout phase-2-storage-analytics           # the repo as it was at the end of Phase 2
-```
-
-The tutorial chapters walk through those steps in order and explain the
-decisions behind them.

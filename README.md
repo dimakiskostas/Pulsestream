@@ -12,7 +12,7 @@ added phase by phase. The design is in [`docs/hld.pdf`](docs/hld.pdf); the build
 written up as a tutorial in [`docs/tutorial/`](docs/tutorial/README.md), one git
 branch per phase.
 
-## How it works (Phase 5)
+## How it works
 
 ```
 Wikimedia EventStreams ──SSE──▶ WikimediaSource ──▶ asyncio.Queue ──▶ consumer ──▶ StreamProcessor

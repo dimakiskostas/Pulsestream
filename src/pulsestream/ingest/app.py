@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 
 from pulsestream import __version__
 from pulsestream.api.schemas import IngestStats, LivenessStatus, ReadinessStatus
@@ -117,7 +117,11 @@ def create_ingest_app(
     async def stats(request: Request) -> IngestStats:
         """What this process has pushed into the bus, and what the bus holds."""
         state = request.app.state
-        bus_stats = await state.bus.stats(cfg.bus_group)
+        try:
+            bus_stats = await state.bus.stats(cfg.bus_group)
+        except Exception as exc:
+            detail = f"bus unreachable: {type(exc).__name__}: {exc}"
+            raise HTTPException(status_code=503, detail=detail) from exc
         return IngestStats(
             published_total=state.publisher.published_total,
             batches=state.publisher.batches,

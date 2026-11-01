@@ -136,6 +136,38 @@ async def test_ingest_and_api_meet_in_the_bus(tmp_path: Path) -> None:
     assert bus_status["lag"] == 0
 
 
+async def test_bus_endpoint_answers_503_when_the_broker_is_away(tmp_path: Path) -> None:
+    cfg = Settings(
+        _env_file=None,
+        bus="redis",
+        db_path=str(tmp_path / "away.duckdb"),
+        lake_enabled=False,
+        scheduler_enabled=False,
+    )
+
+    class Gone:
+        connected = False
+
+        async def ping(self) -> bool:
+            return False
+
+        async def stats(self, group: str) -> None:
+            raise redis_exceptions.ConnectionError("broker away")
+
+    api = create_app(cfg, bus=make_bus())
+    async with serving(api) as client:
+        assert (await client.get("/bus")).json()["mode"] == "redis"
+        state = client.app_ref.state  # type: ignore[attr-defined]
+        real, state.bus = state.bus, Gone()
+        try:
+            response = await client.get("/bus")
+            ready = await client.get("/health/ready")
+        finally:
+            state.bus = real
+    assert response.status_code == 503 and "bus unreachable" in response.json()["detail"]
+    assert ready.status_code == 503 and ready.json()["checks"]["bus"] is False
+
+
 async def test_a_crash_before_the_ack_redelivers_without_duplicate_rows(tmp_path: Path) -> None:
     bus = make_bus()
     events = raws(10)

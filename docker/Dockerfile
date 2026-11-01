@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# One Dockerfile, two images: `--target api` and `--target dashboard`.
+# One Dockerfile, three images: `--target api`, `--target dashboard`, `--target ingest`.
 #
 # builder: uv resolves from uv.lock and installs the project into a self-contained
 #          virtualenv (dependencies first, for layer caching; then the project).
@@ -48,3 +48,10 @@ EXPOSE 8501
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3).status == 200 else 1)"
 CMD ["dashboard", "--port", "8501"]
+
+FROM runtime AS ingest
+ENV PULSE_BUS=redis
+EXPOSE 8001
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/health/live', timeout=3).status == 200 else 1)"
+CMD ["ingest", "--host", "0.0.0.0", "--port", "8001"]

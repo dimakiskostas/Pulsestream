@@ -49,3 +49,27 @@ groups:
           severity: warning
         annotations:
           summary: "Maintenance job {{ $labels.job }} failed in the last 30 minutes"
+
+      - alert: PulseStreamIngestDown
+        expr: up{job="pulsestream-ingest"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The ingest service is not answering /metrics; nothing new reaches the bus"
+
+      - alert: PulseStreamBusBacklog
+        expr: max(pulsestream_bus_lag{job="pulsestream-api"}) > 5000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 5000 entries in the bus not yet handed to the processor"
+
+      - alert: PulseStreamBusPendingHigh
+        expr: max(pulsestream_bus_pending{job="pulsestream-api"}) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 1000 delivered entries unacknowledged for 5 minutes: the processor is stalled"

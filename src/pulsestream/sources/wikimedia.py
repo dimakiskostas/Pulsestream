@@ -26,6 +26,7 @@ from httpx_sse import aconnect_sse
 
 from pulsestream import __version__
 from pulsestream.common import metrics
+from pulsestream.common.backoff import delay_for
 from pulsestream.models import RawEvent
 
 STREAM_URL = "https://stream.wikimedia.org/v2/stream/recentchange"
@@ -47,19 +48,6 @@ class _Transient(Exception):
     def __init__(self, reason: str, retry_after: float | None = None) -> None:
         super().__init__(reason)
         self.retry_after = retry_after
-
-
-def base_delay_for(attempt: int, base: float = 1.0, cap: float = 30.0) -> float:
-    return float(min(cap, base * (2**attempt)))
-
-
-def delay_for(
-    attempt: int, base: float = 1.0, cap: float = 30.0, rng: random.Random | None = None
-) -> float:
-    """Exponential backoff with jitter: uniform in [d/2, d), d = min(cap, base * 2**attempt)."""
-    d = base_delay_for(attempt, base, cap)
-    jitter = rng.uniform(0, d / 2) if rng is not None else random.uniform(0, d / 2)
-    return d / 2 + jitter
 
 
 def _retry_after(response: httpx.Response, default: float | None) -> float | None:

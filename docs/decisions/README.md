@@ -22,6 +22,8 @@ supersedes the old one.
 | 0013 | Deploy target: one VPS, Docker Compose, SSH deploy from a tag   | §9, §13      | 4     |
 | 0014 | Observability: one log format, fixed metric series, two probes | §11          | 4     |
 | 0015 | CI builds, scans and publishes images; a git tag is the release | §9, §13      | 4     |
+| 0016 | Redis Streams as the broker; time retention; no partition key  | §3, §7, §13  | 5     |
+| 0017 | Delivery: at-least-once, ack after the write, replay from the bus | D2, §4     | 5     |
 
 Template: **Status** (proposed / accepted / superseded by NNNN), **Context**,
 **Decision**, **Alternatives considered**, **Consequences**, **Revisit if**.

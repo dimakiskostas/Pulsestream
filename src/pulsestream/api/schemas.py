@@ -36,6 +36,36 @@ class ReadinessStatus(BaseModel):
     silence_seconds: float  # seconds since the last processed batch (or since start)
 
 
+class BusStatus(BaseModel):
+    """The stream between ingestion and processing, as this process sees it."""
+
+    mode: Literal["none", "redis"]
+    stream: str | None = None
+    group: str | None = None
+    consumer: str | None = None
+    length: int = 0
+    first_id: str | None = None
+    last_id: str | None = None
+    pending: int = 0  # delivered to the group, not yet acknowledged (any consumer)
+    lag: int | None = None  # entries the group has not been handed yet
+    inflight: int = 0  # handed to this process's consumer loop, not yet acknowledged
+    delivered_total: int = 0
+    acked_total: int = 0
+
+
+class IngestStats(BaseModel):
+    """The ingest service: what it pushed into the bus, and what the stream holds."""
+
+    published_total: int
+    batches: int
+    publish_failures: int
+    last_published_at: datetime | None
+    queue_depth: int
+    stream_length: int
+    stream_first_id: str | None
+    stream_last_id: str | None
+
+
 class StatsLatest(BaseModel):
     events_total: int
     events_last_min: int

@@ -1,6 +1,7 @@
 """The ``pulsestream`` command: one front door for every service and tool.
 
     pulsestream api          serve the API; the ingestion pipeline runs inside it
+    pulsestream ingest       publish the source to the bus: the split ingestion service
     pulsestream capture      record live events to a JSONL fixture for replay
     pulsestream replay       rebuild a DuckDB file from the Parquet lake
     pulsestream dashboard    run the Streamlit dashboard against a running API
@@ -45,12 +46,23 @@ def build_parser() -> argparse.ArgumentParser:
     api.add_argument("--port", type=int, default=8000)
     api.add_argument("--reload", action="store_true", help="dev mode: restart on code changes")
 
+    ing = sub.add_parser(
+        "ingest",
+        help="publish the source to the bus (PULSE_BUS=redis); probes and /stats on --port",
+    )
+    ing.add_argument("--host", default="127.0.0.1")
+    ing.add_argument("--port", type=int, default=8001)
+
     cap = sub.add_parser("capture", help="record N live events to a JSONL fixture for replay")
     cap.add_argument("-n", "--count", type=int, default=500)
     cap.add_argument("-o", "--output", default="tests/fixtures/sample_events.jsonl")
 
-    rep = sub.add_parser("replay", help="rebuild a DuckDB file from the Parquet lake")
+    rep = sub.add_parser("replay", help="rebuild a DuckDB file from the Parquet lake or the bus")
     rep.add_argument("--lake", default="data/raw", help="lake root (PULSE_LAKE_ROOT)")
+    rep.add_argument(
+        "--from-bus", action="store_true", help="read the bus (a Redis Stream) instead of the lake"
+    )
+    rep.add_argument("--redis-url", default=None, help="the bus to read (default: PULSE_REDIS_URL)")
     rep.add_argument("--db", default="replay.duckdb", help="target DuckDB file (created/extended)")
     rep.add_argument("--since", type=_utc, default=None, help="ISO timestamp, inclusive (UTC)")
     rep.add_argument("--until", type=_utc, default=None, help="ISO timestamp, exclusive (UTC)")
@@ -85,6 +97,13 @@ def cmd_api(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ingest(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    uvicorn.run("pulsestream.ingest.app:app", host=args.host, port=args.port, log_config=None)
+    return 0
+
+
 def cmd_capture(args: argparse.Namespace) -> int:
     from pulsestream.capture import capture
     from pulsestream.sources.wikimedia import WikimediaSource
@@ -95,13 +114,38 @@ def cmd_capture(args: argparse.Namespace) -> int:
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
-    from pulsestream.replay import replay
+    from pulsestream.replay import ReplayReport, replay
 
-    report = asyncio.run(
-        replay(args.lake, args.db, since=args.since, until=args.until, batch_size=args.batch_size)
-    )
+    async def run() -> ReplayReport:
+        bus = None
+        source = None
+        if args.from_bus:
+            from pulsestream.config import settings
+            from pulsestream.sources.bus import BusReplaySource
+            from pulsestream.wiring import build_bus
+
+            cfg = settings
+            if args.redis_url is not None:
+                cfg = settings.model_copy(update={"redis_url": args.redis_url})
+            bus = build_bus(cfg)
+            source = BusReplaySource(bus, since=args.since, until=args.until)
+        try:
+            return await replay(
+                args.lake,
+                args.db,
+                since=args.since,
+                until=args.until,
+                batch_size=args.batch_size,
+                source=source,
+            )
+        finally:
+            if bus is not None:
+                await bus.close()
+
+    report = asyncio.run(run())
+    origin = "the bus" if args.from_bus else args.lake
     print(
-        f"replayed {report.raw} raw events from {args.lake}: {report.kept} kept, "
+        f"replayed {report.raw} raw events from {origin}: {report.kept} kept, "
         f"{report.rows} rows in {args.db}, {report.buckets} minute buckets aggregated, "
         f"{report.anomalies} anomalies"
     )
@@ -165,6 +209,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
 
 COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "api": cmd_api,
+    "ingest": cmd_ingest,
     "capture": cmd_capture,
     "replay": cmd_replay,
     "dashboard": cmd_dashboard,

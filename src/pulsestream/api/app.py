@@ -34,6 +34,7 @@ from pulsestream.config import Settings
 from pulsestream.config import settings as default_settings
 from pulsestream.models import RawEvent
 from pulsestream.pipeline import run_consumer, run_producer
+from pulsestream.processing.detection import DetectionStage
 from pulsestream.processing.processor import StreamProcessor
 from pulsestream.scheduler.jobs import JOB_NAMES, Maintenance
 from pulsestream.scheduler.runner import build_scheduler
@@ -75,7 +76,8 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
         queue: asyncio.Queue[RawEvent | None] = asyncio.Queue(maxsize=cfg.queue_maxsize)
         src = source if source is not None else build_source(cfg)
         raw_store = ParquetRawStore(cfg.lake_root) if cfg.lake_enabled else None
-        processor = StreamProcessor(con, raw_store)
+        detection = DetectionStage.from_settings(cfg) if cfg.detection_enabled else None
+        processor = StreamProcessor(con, raw_store, detection)
         producer = asyncio.create_task(run_producer(src, queue), name="producer")
         consumer = asyncio.create_task(
             run_consumer(queue, processor, cfg.batch_size, cfg.flush_interval), name="consumer"
@@ -97,6 +99,7 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
             scheduler.start()
         app.state.con = con
         app.state.raw_store = raw_store
+        app.state.detection = detection
         app.state.processor = processor
         app.state.maintenance = maintenance
         app.state.scheduler = scheduler

@@ -30,6 +30,7 @@ class BatchResult:
 
     raw: int  # raw events received
     kept: int  # events that passed validation (not necessarily new rows: writes are idempotent)
+    anomalies: int = 0  # findings raised by the detection stage for this batch
 
 
 class Processor(Protocol):

@@ -90,7 +90,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
     )
     print(
         f"replayed {report.raw} raw events from {args.lake}: {report.kept} kept, "
-        f"{report.rows} rows in {args.db}, {report.buckets} minute buckets aggregated"
+        f"{report.rows} rows in {args.db}, {report.buckets} minute buckets aggregated, "
+        f"{report.anomalies} anomalies"
     )
     return 0
 

@@ -29,7 +29,9 @@ from pulsestream.api.schemas import (
     JobsResponse,
     JobStatus,
     LakeStats,
+    LivenessStatus,
     PipelineStatus,
+    ReadinessStatus,
     StatsLatest,
     TaskState,
     TimeseriesPoint,
@@ -104,6 +106,8 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
                 compaction_interval_seconds=cfg.compaction_interval_seconds,
             )
             scheduler.start()
+        app.state.started_at = datetime.now(UTC)
+        app.state.source = src
         app.state.con = con
         app.state.raw_store = raw_store
         app.state.detection = detection
@@ -142,6 +146,44 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
         )
         degraded = pipeline.consumer == "failed"
         return HealthStatus(status="degraded" if degraded else "ok", pipeline=pipeline)
+
+    @app.get("/health/live", response_model=LivenessStatus)
+    async def live() -> LivenessStatus:
+        """Liveness: the process is up and serving. Nothing else is checked."""
+        return LivenessStatus(status="alive")
+
+    @app.get("/health/ready", response_model=ReadinessStatus)
+    async def ready(request: Request, response: Response) -> ReadinessStatus:
+        """Readiness: every stage can do useful work; 503 with the failing checks otherwise."""
+        state = request.app.state
+        now = datetime.now(UTC)
+        processed_at = state.processor.last_processed_at
+        since = processed_at if processed_at is not None else state.started_at
+        silence = (now - since).total_seconds()
+        producer = state.producer
+        producer_failed = (
+            producer.done() and not producer.cancelled() and producer.exception() is not None
+        )
+        try:
+            await aquery(state.con, "SELECT 1")
+            store_ok = True
+        except Exception:
+            store_ok = False
+        checks = {
+            "consumer": not state.consumer.done(),
+            "producer": not producer_failed,
+            "store": store_ok,
+            "source": bool(getattr(state.source, "connected", True)),
+            "fresh": silence <= cfg.ready_max_silence_seconds,
+        }
+        is_ready = all(checks.values())
+        response.status_code = 200 if is_ready else 503
+        return ReadinessStatus(
+            ready=is_ready,
+            checks=checks,
+            last_processed_at=processed_at,
+            silence_seconds=round(silence, 3),
+        )
 
     @app.get("/metrics", include_in_schema=False)
     async def prometheus_metrics() -> Response:

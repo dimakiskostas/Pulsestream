@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     stream_url: str = STREAM_URL
     user_agent: str = DEFAULT_USER_AGENT
     read_timeout: float = 60.0  # seconds without bytes before the stream counts as dead
+    ready_max_silence_seconds: int = 120  # /health/ready fails after this long without a batch
 
     # --- detection: rolling features and statistical detectors ------------------
     detection_enabled: bool = True

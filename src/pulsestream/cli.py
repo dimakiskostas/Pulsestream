@@ -5,6 +5,7 @@
     pulsestream replay       rebuild a DuckDB file from the Parquet lake
     pulsestream dashboard    run the Streamlit dashboard against a running API
     pulsestream check        run the data-quality gates on a database and lake
+    pulsestream eval         score the rate detector against synthetic anomalies
 
 Each later phase adds a sub-command here instead of another loose script.
 Heavy imports happen inside the handlers so ``pulsestream --help`` stays instant
@@ -63,6 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
     chk.add_argument("--db", default="pulsestream.duckdb")
     chk.add_argument("--lake", default="data/raw")
     chk.add_argument("--no-lake", action="store_true", help="skip the Parquet lake")
+
+    ev = sub.add_parser("eval", help="score the rate detector against synthetic anomalies")
+    ev.add_argument("--windows", type=int, default=600, help="minutes of synthetic history")
+    ev.add_argument("--spikes", type=int, default=12, help="isolated spikes to inject")
+    ev.add_argument("--factor", type=float, default=4.0, help="spike size, x baseline")
     return parser
 
 
@@ -143,12 +149,21 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_eval(args: argparse.Namespace) -> int:
+    from pulsestream.detection.eval import format_table, standard_scenarios
+
+    scenarios = standard_scenarios(windows=args.windows, spikes=args.spikes, factor=args.factor)
+    print(format_table(scenarios))
+    return 0
+
+
 COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "api": cmd_api,
     "capture": cmd_capture,
     "replay": cmd_replay,
     "dashboard": cmd_dashboard,
     "check": cmd_check,
+    "eval": cmd_eval,
 }
 
 

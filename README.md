@@ -19,27 +19,34 @@ branch per phase.
 | 0     | Skeleton: uv, Ruff, mypy (strict), pytest, pre-commit, green CI  | done    |
 | 1     | Vertical slice: live source → queue → validate → DuckDB → API    | done    |
 | 2     | Storage + analytics: Parquet lake, aggregates, scheduler, dashboard, replay, quality gates | done |
-| 3     | Anomaly detection v1: rolling features + EWMA control band       | next    |
-| 4     | CI/CD + observability: containers, GHCR, metrics, health         | planned |
+| 3     | Anomaly detection v1: event-time windows, EWMA control band, byte-delta MAD, synthetic evaluation | done |
+| 4     | CI/CD + observability: containers, GHCR, metrics, health         | next    |
 | 5     | Streaming decoupling: broker, separate services, replay          | planned |
 
-## How it works (Phase 2)
+## How it works (Phase 3)
 
 ```
 Wikimedia EventStreams ──SSE──▶ WikimediaSource ──▶ asyncio.Queue ──▶ consumer ──▶ StreamProcessor
-   (recentchange)              reconnect + resume    (bounded =        (worker        │        │
-                                                      backpressure)     thread)       ▼        ▼
-                                                                          Parquet lake      DuckDB wiki_events
-                                                                          data/raw/dt=/hour=   └▶ agg_minutely
+   (recentchange)              reconnect + resume    (bounded =        (worker        │   │   │
+                                                      backpressure)     thread)       ▼   │   ▼
+                                                                  Parquet lake        │  DuckDB wiki_events
+                                                                  data/raw/dt=/hour=  │     └▶ agg_minutely
+                                                                                      ▼
+                                                   detection: TumblingCounter (per wiki, 60 s, event time)
+                                                              EwmaBandDetector (count vs EWMA ± 3·std)
+                                                              ByteDeltaDetector (|delta| vs median/MAD)
+                                                              ──▶ features_rolling, anomalies
                                    APScheduler: refresh aggregates (60 s), compact lake (10 min)
                                    FastAPI: /health /stats/latest /timeseries /aggregates/minutely
-                                            /entities/top /lake /jobs            ◀──HTTP── Streamlit dashboard
+                                            /entities/top /lake /jobs /anomalies /anomalies/summary
+                                            /features                        ◀──HTTP── Streamlit dashboard
 ```
 
-One API process owns the pipeline, the DuckDB writer and the scheduler. The
-dashboard is a second process that reads only the API. `EventSource` is a
-protocol, so the live source, the replay `FakeSource` and the lake's
-`ParquetSource` are interchangeable.
+One API process owns the pipeline, the DuckDB writer, the detectors and the
+scheduler. The dashboard is a second process that reads only the API.
+`EventSource` is a protocol, so the live source, the replay `FakeSource` and
+the lake's `ParquetSource` are interchangeable, and a replay from the lake
+reproduces the live findings exactly.
 
 ## Quickstart
 
@@ -69,17 +76,22 @@ curl -s "localhost:8000/aggregates/minutely?minutes=60"
 curl -s "localhost:8000/entities/top?minutes=60&limit=10"
 curl -s localhost:8000/lake
 curl -s localhost:8000/jobs
+curl -s "localhost:8000/anomalies/summary?minutes=30"
+curl -s "localhost:8000/anomalies?minutes=30&severity=critical&limit=5"
+curl -s "localhost:8000/features?entity=commonswiki&minutes=30"
 ```
 
 `events_total` climbs within seconds; `/aggregates/minutely` fills after the
-first refresh job (every minute, or `POST /jobs/refresh_aggregates/run`).
+first refresh job (every minute, or `POST /jobs/refresh_aggregates/run`);
+findings appear once a wiki has ten minutes of history.
 
 Other commands:
 
 ```bash
 PULSE_SOURCE=fake PULSE_FIXTURE_DELAY=0.05 uv run pulsestream api     # offline replay of the fixture
-uv run pulsestream replay --lake data/raw --db replay.duckdb          # rebuild a DB from the lake
+uv run pulsestream replay --lake data/raw --db replay.duckdb          # rebuild a DB (and its findings) from the lake
 uv run pulsestream check --db pulsestream.duckdb --lake data/raw      # pandera data-quality gates
+uv run pulsestream eval                                               # detector precision/recall on synthetic spikes
 uv run pulsestream capture -n 500 -o tests/fixtures/sample_events.jsonl
 ```
 
@@ -99,6 +111,10 @@ the defaults live in [`src/pulsestream/config.py`](src/pulsestream/config.py).
 | `PULSE_USER_AGENT`                  | `PulseStream/<version> (...)` | Wikimedia requires a descriptive UA |
 | `PULSE_AGGREGATE_INTERVAL_SECONDS`  | `60`                 | agg_minutely refresh cadence             |
 | `PULSE_COMPACTION_INTERVAL_SECONDS` | `600`                | lake compaction cadence                  |
+| `PULSE_DETECTION_ENABLED`           | `true`               | run the detectors in the pipeline        |
+| `PULSE_WINDOW_SECONDS` / `_LATENESS_SECONDS` | `60` / `10` | tumbling window and allowed lateness    |
+| `PULSE_BAND_K` / `_WARMUP_WINDOWS`  | `3.0` / `10`         | EWMA ± k·std; windows before judging     |
+| `PULSE_BYTE_DELTA_MIN_BYTES`        | `1000`               | smaller edits are never findings         |
 | `PULSE_API_URL`                     | `http://127.0.0.1:8000` | what the dashboard reads              |
 
 ## Development
@@ -110,18 +126,22 @@ make precommit    # = uv run pre-commit run --all-files
 
 Tests never touch the network: the live source is tested against an httpx mock
 transport, the pipeline/API tests replay `tests/fixtures/sample_events.jsonl`
-(500 real events captured on 2026-10-11), and the dashboard runs headlessly under
-Streamlit's `AppTest`. CI runs the same commands on Python 3.12 and 3.13.
+(500 real events captured on 2026-10-11), the detectors are scored against
+synthetic series with injected anomalies, and the dashboard runs headlessly
+under Streamlit's `AppTest`. CI runs the same commands on Python 3.12 and 3.13.
 
 ## Repository layout
 
 ```
 src/pulsestream/
-  cli.py              pulsestream api | capture | replay | dashboard | check
+  cli.py              pulsestream api | capture | replay | dashboard | check | eval
   config.py           typed settings (PULSE_*)
-  models.py           RawEvent envelope, WikiEvent domain event (+ from_raw filter)
+  models.py           RawEvent, WikiEvent (+ from_raw filter), FeatureSnapshot, Anomaly
   pipeline.py         producer / consumer over a bounded asyncio.Queue; Processor protocol
-  processing/         StreamProcessor: raw lake -> validate -> DuckDB
+  processing/         StreamProcessor (lake -> validate -> DuckDB -> detection),
+                      windows.py (event-time tumbling counter), detection.py (the stage)
+  detection/          features.py (EWMA, rolling std, MAD), rate.py (control band),
+                      bytes.py (byte-delta MAD), eval.py (synthetic-anomaly evaluation)
   sources/            EventSource protocol; Wikimedia (SSE), Fake (replay), Parquet (lake)
   storage/            duck.py (schema, UTC, cursors), parquet.py (lake + compaction), aggregates.py
   scheduler/          APScheduler jobs: refresh aggregates, compact lake
@@ -129,11 +149,11 @@ src/pulsestream/
   dashboard/          Streamlit page + its HTTP data layer
   quality.py          pandera gates for the lake and the tables
   replay.py, capture.py
-tests/                unit, integration (fixture replay), API contract, dashboard, quality
+tests/                unit, integration (fixture replay), API contract, detector evaluation, dashboard, quality
 docs/
   hld.pdf, tutorial.pdf      the design and the guided tutorial the build follows
   tutorial/                  the worked tutorial for this repository, one chapter per phase
-  decisions/                 architecture decision records (ADR 0001-0009)
+  decisions/                 architecture decision records (ADR 0001-0012)
 ```
 
 ## Reading the history

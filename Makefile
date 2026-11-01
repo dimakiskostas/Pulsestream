@@ -1,7 +1,7 @@
 # PulseStream task runner. Every target is a thin alias over `uv run ...`, so on a
 # machine without make (Windows) you can type the underlying command instead.
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test check precommit run run-replay dashboard replay capture clean
+.PHONY: help install lint format typecheck test check precommit run run-replay dashboard replay capture eval check-data clean
 
 help:            ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -43,6 +43,12 @@ replay:          ## rebuild replay.duckdb from the Parquet lake in data/raw
 
 capture:         ## record 500 live events to tests/fixtures/sample_events.jsonl
 	uv run pulsestream capture -n 500
+
+eval:            ## score the rate detector against injected synthetic anomalies
+	uv run pulsestream eval
+
+check-data:      ## pandera data-quality gates on the local DB and lake
+	uv run pulsestream check --db pulsestream.duckdb --lake data/raw
 
 clean:           ## remove caches and local databases
 	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage *.duckdb *.duckdb.wal

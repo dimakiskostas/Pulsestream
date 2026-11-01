@@ -1,9 +1,17 @@
 import json
 from datetime import UTC, datetime
 from typing import Literal
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from pydantic import BaseModel, Field
+
+# Namespace for deterministic anomaly ids: the same finding on the same window or
+# event always gets the same id, so a replay never duplicates an anomaly.
+ANOMALY_NAMESPACE = UUID("6f1c2b4e-9d3a-4c5e-8f7a-2b1d0e9c8a77")
+
+Metric = Literal["edit_rate", "byte_delta"]
+Method = Literal["ewma_band", "mad_zscore"]
+Severity = Literal["warn", "high", "critical"]
 
 
 class RawEvent(BaseModel):
@@ -67,3 +75,51 @@ class WikiEvent(BaseModel):
             title=title,
             namespace=namespace,
         )
+
+
+class FeatureSnapshot(BaseModel):
+    """Rolling features of one entity for one closed tumbling window."""
+
+    entity: str
+    window_start: datetime
+    window_end: datetime
+    count: int
+    rate_per_min: float
+    ewma: float | None  # baseline *before* this window; None while warming up
+    mean: float | None
+    std: float | None
+    zscore: float | None
+    is_anomaly: bool = False
+
+
+class Anomaly(BaseModel):
+    """One flagged observation. ``anomaly_id`` is deterministic, see ``anomaly_id()``."""
+
+    anomaly_id: UUID
+    detected_at: datetime
+    entity: str
+    metric: Metric
+    value: float
+    expected: float | None  # the baseline the value was compared against
+    score: float  # signed z-like score; the sign is the direction
+    method: Method
+    severity: Severity
+    window_start: datetime
+    window_end: datetime
+    event_id: str | None = None  # set for per-event (byte_delta) findings
+    model_version: str | None = None  # None for the statistical detectors
+    details: str | None = None
+
+
+def anomaly_id(method: str, entity: str, metric: str, key: str) -> UUID:
+    """Stable id for a finding: same method, entity, metric and key -> same UUID."""
+    return uuid5(ANOMALY_NAMESPACE, f"{method}:{entity}:{metric}:{key}")
+
+
+def severity_for(score: float) -> Severity:
+    magnitude = abs(score)
+    if magnitude >= 8.0:
+        return "critical"
+    if magnitude >= 5.0:
+        return "high"
+    return "warn"

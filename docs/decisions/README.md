@@ -16,6 +16,9 @@ supersedes the old one.
 | 0007 | The dashboard reads through the API, not the database          | D5, §7       | 2     |
 | 0008 | Raw lake layout (dt/hour by received_at) and compaction policy | §7, D4       | 2     |
 | 0009 | Derived tables come from validated events, not raw Parquet     | §7, §8       | 2     |
+| 0010 | Rate detector: tumbling minutes, EWMA ± 3·std, four guards     | D6, §7, §12  | 3     |
+| 0011 | Detector quality is measured by injecting synthetic anomalies  | §10, §12     | 3     |
+| 0012 | Byte-delta detector: a large-edit detector calibrated on live data | §5, §12   | 3     |
 
 Template: **Status** (proposed / accepted / superseded by NNNN), **Context**,
 **Decision**, **Alternatives considered**, **Consequences**, **Revisit if**.

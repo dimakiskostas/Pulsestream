@@ -1,9 +1,12 @@
 """Pydantic response models: the API contract that OpenAPI documents and tests assert."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel
+
+from pulsestream.models import Method, Metric, Severity
 
 TaskState = Literal["running", "done", "failed"]
 Bucket = Literal["10s", "1m", "5m", "1h"]
@@ -76,6 +79,86 @@ class EntityCount(BaseModel):
 class TopEntitiesResponse(BaseModel):
     minutes: int
     entities: list[EntityCount] = []
+
+
+class AnomalyOut(BaseModel):
+    anomaly_id: UUID
+    detected_at: datetime
+    entity: str
+    metric: Metric
+    value: float
+    expected: float | None
+    score: float
+    method: Method
+    severity: Severity
+    window_start: datetime
+    window_end: datetime
+    event_id: str | None
+    model_version: str | None
+    details: str | None
+
+    @classmethod
+    def from_row(cls, row: tuple[Any, ...]) -> "AnomalyOut":
+        """Build from a SELECT in the anomalies table's column order."""
+        names = (
+            "anomaly_id",
+            "detected_at",
+            "entity",
+            "metric",
+            "value",
+            "expected",
+            "score",
+            "method",
+            "severity",
+            "window_start",
+            "window_end",
+            "event_id",
+            "model_version",
+            "details",
+        )
+        return cls(**dict(zip(names, row, strict=True)))
+
+
+class AnomaliesResponse(BaseModel):
+    minutes: int
+    entity: str | None
+    metric: Metric | None
+    severity: Severity | None
+    anomalies: list[AnomalyOut] = []
+
+
+class EntityAnomalies(BaseModel):
+    entity: str
+    count: int
+
+
+class AnomalySummary(BaseModel):
+    minutes: int
+    total: int
+    by_severity: dict[str, int]
+    by_metric: dict[str, int]
+    top_entities: list[EntityAnomalies] = []
+
+
+class FeaturePoint(BaseModel):
+    window_start: datetime
+    window_end: datetime
+    count: int
+    rate_per_min: float
+    ewma: float | None  # baseline before the window; None while warming up
+    mean: float | None
+    std: float | None
+    zscore: float | None
+    upper: float | None  # ewma + k * max(std, min_std): the band's top
+    lower: float | None  # the band's floor, never below zero
+    is_anomaly: bool
+
+
+class FeaturesResponse(BaseModel):
+    entity: str
+    minutes: int
+    k: float
+    points: list[FeaturePoint] = []
 
 
 class JobStatus(BaseModel):

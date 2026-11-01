@@ -32,6 +32,24 @@ class Settings(BaseSettings):
     user_agent: str = DEFAULT_USER_AGENT
     read_timeout: float = 60.0  # seconds without bytes before the stream counts as dead
 
+    # --- detection: rolling features and statistical detectors ------------------
+    detection_enabled: bool = True
+    window_seconds: int = 60  # tumbling window for per-entity edit counts
+    lateness_seconds: int = 10  # how late an event may arrive and still count
+    max_gap_windows: int = 60  # silent windows filled with zeros before an entity is forgotten
+    ewma_alpha: float = 0.3
+    band_k: float = 3.0  # a count outside EWMA ± k·std is a finding
+    warmup_windows: int = 10  # windows seen before an entity is judged
+    std_window: int = 30  # rolling std over this many windows
+    min_std: float = 1.0  # floor for the std, in events per window
+    min_abs_deviation: float = 5.0  # a finding needs at least this many events of deviation
+    detect_drops: bool = True  # a count far below the band (a busy wiki going silent) counts
+    byte_delta_enabled: bool = True
+    byte_delta_window: int = 200  # recent edits per entity kept as the size reference
+    byte_delta_warmup: int = 50
+    byte_delta_threshold: float = 8.0  # modified z-score (median/MAD) threshold
+    byte_delta_min_bytes: int = 50_000  # smaller edits are never findings (calibrated live)
+
     # --- scheduler (periodic maintenance) -------------------------------------
     scheduler_enabled: bool = True
     aggregate_interval_seconds: int = 60  # how often agg_minutely is refreshed

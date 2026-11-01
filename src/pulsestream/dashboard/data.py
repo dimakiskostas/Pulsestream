@@ -24,6 +24,28 @@ MINUTELY_SCHEMA = pl.Schema(
     }
 )
 TOP_SCHEMA = pl.Schema({"entity": pl.Utf8(), "count": pl.Int64(), "bot_count": pl.Int64()})
+ANOMALIES_SCHEMA = pl.Schema(
+    {
+        "window_start": pl.Datetime("us", "UTC"),
+        "entity": pl.Utf8(),
+        "metric": pl.Utf8(),
+        "severity": pl.Utf8(),
+        "value": pl.Float64(),
+        "expected": pl.Float64(),
+        "score": pl.Float64(),
+        "details": pl.Utf8(),
+    }
+)
+FEATURES_SCHEMA = pl.Schema(
+    {
+        "window_start": pl.Datetime("us", "UTC"),
+        "count": pl.Int64(),
+        "ewma": pl.Float64(),
+        "upper": pl.Float64(),
+        "lower": pl.Float64(),
+        "is_anomaly": pl.Boolean(),
+    }
+)
 
 
 def _timestamp(text: str) -> datetime:
@@ -73,3 +95,25 @@ class ApiClient:
     def top_entities(self, minutes: int = 60, limit: int = 10) -> pl.DataFrame:
         entities = self._get("/entities/top", minutes=minutes, limit=limit)["entities"]
         return pl.DataFrame(entities, schema=TOP_SCHEMA)
+
+    def anomalies(self, minutes: int = 60, limit: int = 50) -> pl.DataFrame:
+        found = self._get("/anomalies", minutes=minutes, limit=limit)["anomalies"]
+        rows = [
+            {name: a[name] for name in ANOMALIES_SCHEMA.names() if name != "window_start"}
+            | {"window_start": _timestamp(a["window_start"])}
+            for a in found
+        ]
+        return pl.DataFrame(rows, schema=ANOMALIES_SCHEMA)
+
+    def anomaly_summary(self, minutes: int = 60) -> dict[str, Any]:
+        result: dict[str, Any] = self._get("/anomalies/summary", minutes=minutes)
+        return result
+
+    def features(self, entity: str, minutes: int = 60) -> pl.DataFrame:
+        points = self._get("/features", entity=entity, minutes=minutes)["points"]
+        rows = [
+            {name: p[name] for name in FEATURES_SCHEMA.names() if name != "window_start"}
+            | {"window_start": _timestamp(p["window_start"])}
+            for p in points
+        ]
+        return pl.DataFrame(rows, schema=FEATURES_SCHEMA)

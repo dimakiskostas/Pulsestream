@@ -4,9 +4,10 @@ Running PulseStream in containers, what to watch, and how a release reaches a
 server. The decisions behind this page:
 [ADR 0013](decisions/0013-deploy-target-vps-compose-over-ssh.md) (deploy
 target), [ADR 0014](decisions/0014-observability-logs-metrics-probes.md)
-(logs, metrics, probes) and
-[ADR 0015](decisions/0015-images-built-in-ci-released-by-tag.md) (CI and
-releases).
+(logs, metrics, probes), [ADR 0015](decisions/0015-images-built-in-ci-released-by-tag.md)
+(CI and releases), [ADR 0016](decisions/0016-redis-streams-as-the-broker.md)
+(the bus) and [ADR 0017](decisions/0017-delivery-at-least-once-ack-after-write.md)
+(delivery semantics).
 
 ## Run it with Docker
 
@@ -14,7 +15,7 @@ Requires Docker with BuildKit and the Compose plugin: Docker Desktop, or Docker
 Engine with the `docker-buildx` and `docker-compose-v2` packages.
 
 ```bash
-docker compose up --build -d                        # api on :8000, dashboard on :8501
+docker compose up --build -d                        # redis, ingest on :8001, api on :8000, dashboard on :8501
 ```
 
 ```bash
@@ -33,15 +34,24 @@ docker compose --profile monitoring down            # stop everything; the volum
 commands. A `.env` file next to `docker-compose.yml` supplies the `${...}`
 values (`PULSE_SOURCE`, `PULSE_LOG_LEVEL`, `PULSE_FIXTURE_DELAY`,
 `GRAFANA_ADMIN_PASSWORD`, `IMAGE_TAG`); any other `PULSE_*` setting goes under
-the `api` service's `environment`. Inside the images the database and the lake
-live under `/data` (the `pulsestream-data` volume), logs are JSON on stderr,
-and the process runs as uid 10001.
+the service's `environment`. Inside the images the database and the lake live
+under `/data` (the `pulsestream-data` volume), the stream in the `redis-data`
+volume, logs are JSON on stderr, and the processes run as uid 10001.
+
+The stack is the split pipeline: `ingest` reads the source and publishes to
+the Redis Stream `pulsestream:events`; `api` consumes it as the consumer
+group `processors` under the fixed consumer name `api`, writes DuckDB and
+serves every endpoint; `dashboard` reads the API. Stopping either service
+leaves the other running; what reached the bus is processed when `api` is
+back (ADR 0017).
 
 | URL                           | what                                                                            |
 | ----------------------------- | ------------------------------------------------------------------------------- |
 | http://localhost:8000/docs    | the API (OpenAPI)                                                               |
+| http://localhost:8000/bus     | the stream (length, span, lag) and this consumer (pending, in flight, acked)    |
+| http://localhost:8001/stats   | the ingest service: published, batches, failures, queue depth, stream span      |
 | http://localhost:8501         | the dashboard                                                                   |
-| http://localhost:8000/metrics | Prometheus text exposition                                                      |
+| http://localhost:8000/metrics | Prometheus text exposition (`:8001/metrics` for the ingest service)             |
 | http://localhost:9090/alerts  | Prometheus and the alert rules (monitoring profile)                             |
 | http://localhost:3000         | Grafana: anonymous viewer, or admin / `GRAFANA_ADMIN_PASSWORD` (default `admin`) |
 
@@ -57,7 +67,10 @@ change the file and restart Grafana.
 | endpoint        | question               | 200 when                                                                                                                                       |
 | --------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/health/live`  | is the process up?     | always, while the server answers; this is the container `HEALTHCHECK`                                                                          |
-| `/health/ready` | can it do useful work? | consumer running, producer not failed, store answers `SELECT 1`, source connected, a batch processed within `PULSE_READY_MAX_SILENCE_SECONDS` |
+| `/health/ready` | can it do useful work? | consumer running, producer not failed, store answers `SELECT 1`, source connected, a batch processed within `PULSE_READY_MAX_SILENCE_SECONDS`; in bus mode also `bus` (the broker answers PING) |
+
+The ingest service has the same two probes; its readiness checks producer,
+publisher, source, bus and a batch published within the same silence window.
 
 `/health/ready` answers 503 with each failing check named, so the reason is in
 the response:
@@ -80,6 +93,12 @@ the response:
 | `pulsestream_anomalies_detected_total{metric,severity}` | counter | a flood (hundreds an hour) means a detector needs recalibrating (ADR 0012) |
 | `pulsestream_source_reconnects_total`     | counter   | more than a few an hour                                             |
 | `pulsestream_job_runs_total{job,outcome}` | counter   | any `failed`                                                        |
+| `pulsestream_bus_published_total`         | counter   | (ingest) its rate per minute is the stream's input; flat means the source or the ingest service stopped |
+| `pulsestream_bus_stream_length`           | gauge     | entries retained; grows with the rate and `PULSE_BUS_RETENTION_MINUTES`, so it is the broker's memory |
+| `pulsestream_bus_lag`                     | gauge     | (api) entries not yet handed to the processor: a backlog after an outage should shrink to 0 within minutes |
+| `pulsestream_bus_pending`                 | gauge     | (api) delivered and not acknowledged: above a batch for more than a batch's time means the processor is stalled |
+| `pulsestream_bus_redeliveries_total`      | counter   | entries re-read after a restart or claimed from a dead consumer; each one is a batch that was written twice |
+| `pulsestream_errors_total{stage="bus"}`   | counter   | failed publishes, reads or acknowledgements (retried); a broker outage shows here first |
 
 ### Alert rules
 
@@ -95,6 +114,9 @@ deployment's choice.
 | `PulseStreamQueueNearFull`| queue depth above 900 for 2 minutes                      |
 | `PulseStreamErrors`       | any error in the last 10 minutes                         |
 | `PulseStreamJobFailing`   | a maintenance job failed in the last 30 minutes          |
+| `PulseStreamIngestDown`   | the ingest service's `/metrics` unreachable for 2 minutes |
+| `PulseStreamBusBacklog`   | more than 5000 entries not yet handed to the processor for 5 minutes |
+| `PulseStreamBusPendingHigh` | more than 1000 delivered entries unacknowledged for 5 minutes |
 
 ### Logs
 
@@ -110,6 +132,36 @@ Every line emitted while a batch is being processed carries that batch's
 `docker compose logs api | grep '"ingest_id": "0d2d1b4e'` is the trace of one
 batch through the lake, validation, DuckDB and the detectors. uvicorn,
 APScheduler and httpx lines are in the same format.
+
+### The bus
+
+`GET /bus` on the API is the first stop when the split misbehaves:
+
+```json
+{"mode": "redis", "stream": "pulsestream:events", "group": "processors", "consumer": "api",
+ "length": 13718, "first_id": "1793551626269-0", "last_id": "1793551821168-4",
+ "pending": 0, "lag": 0, "inflight": 0, "delivered_total": 13718, "acked_total": 13718}
+```
+
+- `lag` is what the processor has not been handed yet. It grows while `api`
+  is down and shrinks to zero within minutes after it is back; it should be
+  zero in steady state.
+- `pending` is delivered but not acknowledged. In steady state it is at most
+  a batch or two; stuck above that, the consumer loop is dead or the store is
+  blocked (`/health/ready` says which).
+- `inflight` is this process's view of the same thing; the two differ only
+  while an acknowledgement is being retried.
+- Entry ids are millisecond timestamps: `first_id` and `last_id` are the
+  window the stream currently holds, and the window
+  `pulsestream replay --from-bus --since … --until …` can rebuild.
+
+A redelivery is normal after a restart (the restarted consumer re-reads what
+it had not acknowledged) and harmless (the rows already exist). A `consumer`
+name that changes between restarts (a container without
+`PULSE_BUS_CONSUMER`) leaves the old name's entries pending until the claim
+timeout (`PULSE_BUS_CLAIM_IDLE_SECONDS`, 60 s) hands them to the new one.
+Never run two API processes against the same group: they would split each
+wiki's events between them.
 
 ## Releasing and deploying
 
@@ -187,5 +239,9 @@ docker compose stop api && docker run --rm -v pulsestream_pulsestream-data:/data
 | `/health/ready` is 503 with `fresh: false`                | nothing processed for `PULSE_READY_MAX_SILENCE_SECONDS`: the source is down (see `source`), or a replay has finished (expected) |
 | the dashboard cannot reach the API                        | `PULSE_API_URL` must be reachable from the dashboard container (`http://api:8000` inside compose)                         |
 | `docker build` fails on `RUN --mount=type=cache`          | the legacy builder is in use; install buildx (BuildKit), or build in CI                                                   |
+| `/bus` or the ingest `/stats` answer 503 "bus unreachable" | Redis is down or `PULSE_REDIS_URL` is wrong; both services retry with backoff and resume on their own when it is back     |
+| `lag` keeps growing while `api` is up                     | the processor is slower than the stream (check batch p95 and the queue depth) or its consumer loop died (`/health/ready`) |
+| `pending` stays above a batch                             | the consumer loop or the store is stuck; restart `api` (the entries are redelivered, the rows are idempotent)             |
+| the API shows the source as disconnected in bus mode      | that is the bus: `BusSource.connected` mirrors the broker connection                                                      |
 | Grafana panels are empty                                  | Prometheus needs a scrape or two (15 s); check http://localhost:9090/targets                                              |
 | CI's Trivy step fails on a base-image CVE                 | rebuild (the base image tag moved) or `uv lock --upgrade-package <name>`; `ignore-unfixed` already skips CVEs without a fix |

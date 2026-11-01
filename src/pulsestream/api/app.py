@@ -1,8 +1,14 @@
 """FastAPI application: the lifespan owns the pipeline and the DuckDB connection.
 
-Tutorial Part 1.6. ``create_app`` is a factory so tests can inject settings and a
-replay source; the module-level ``app`` is what uvicorn serves
+Tutorial Part 1.6. ``create_app`` is a factory so tests can inject settings, a
+replay source or a bus; the module-level ``app`` is what uvicorn serves
 (``pulsestream api`` -> ``uvicorn pulsestream.api.app:app``).
+
+With ``PULSE_BUS=redis`` the process reads the bus instead of the live source
+(``BusSource``), acknowledges each micro-batch after it is written, and keeps
+the bus gauges fresh; ingestion then runs in ``pulsestream ingest``. The rest of
+the process, the DuckDB writer, the detectors, the scheduler and every endpoint,
+is the same in both modes.
 """
 
 import asyncio
@@ -21,6 +27,7 @@ from pulsestream.api.schemas import (
     AnomalyOut,
     AnomalySummary,
     Bucket,
+    BusStatus,
     EntityAnomalies,
     EntityCount,
     FeaturePoint,
@@ -38,19 +45,22 @@ from pulsestream.api.schemas import (
     TimeseriesResponse,
     TopEntitiesResponse,
 )
+from pulsestream.bus.base import EventBus
+from pulsestream.bus.monitor import keep_stats_fresh
 from pulsestream.common import metrics
 from pulsestream.config import Settings
 from pulsestream.config import settings as default_settings
 from pulsestream.models import Metric, RawEvent, Severity
-from pulsestream.pipeline import run_consumer, run_producer
+from pulsestream.pipeline import BatchHandler, run_consumer, run_producer
 from pulsestream.processing.detection import DetectionStage
 from pulsestream.processing.processor import StreamProcessor
 from pulsestream.scheduler.jobs import JOB_NAMES, Maintenance
 from pulsestream.scheduler.runner import build_scheduler
 from pulsestream.sources.base import EventSource
+from pulsestream.sources.bus import BusSource
 from pulsestream.storage.duck import aquery, connect, ensure_lake_view, lake_row_stats
 from pulsestream.storage.parquet import ParquetRawStore
-from pulsestream.wiring import build_source
+from pulsestream.wiring import build_bus, build_source, consumer_name
 
 BUCKET_INTERVALS: dict[Bucket, str] = {
     "10s": "10 seconds",
@@ -68,20 +78,47 @@ def _task_state(task: asyncio.Task[None]) -> TaskState:
     return "failed"
 
 
-def create_app(cfg: Settings | None = None, source: EventSource | None = None) -> FastAPI:
+def create_app(
+    cfg: Settings | None = None, source: EventSource | None = None, bus: EventBus | None = None
+) -> FastAPI:
     cfg = cfg if cfg is not None else default_settings
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         con = connect(cfg.db_path)
         queue: asyncio.Queue[RawEvent | None] = asyncio.Queue(maxsize=cfg.queue_maxsize)
-        src = source if source is not None else build_source(cfg)
+        the_bus: EventBus | None = None
+        bus_source: BusSource | None = None
+        if cfg.bus == "redis":
+            the_bus = bus if bus is not None else build_bus(cfg)
+            bus_source = BusSource(the_bus, cfg.bus_group, consumer_name(cfg))
+        src: EventSource
+        if source is not None:
+            src = source
+        elif bus_source is not None:
+            src = bus_source
+        else:
+            src = build_source(cfg)
+        # Acknowledge a batch only after its rows are written, and only when the events
+        # came from the bus (an injected replay source has nothing to acknowledge).
+        after_batch: BatchHandler | None = bus_source.ack if src is bus_source else None
         raw_store = ParquetRawStore(cfg.lake_root) if cfg.lake_enabled else None
         detection = DetectionStage.from_settings(cfg) if cfg.detection_enabled else None
         processor = StreamProcessor(con, raw_store, detection)
         producer = asyncio.create_task(run_producer(src, queue), name="producer")
         consumer = asyncio.create_task(
-            run_consumer(queue, processor, cfg.batch_size, cfg.flush_interval), name="consumer"
+            run_consumer(
+                queue, processor, cfg.batch_size, cfg.flush_interval, after_batch=after_batch
+            ),
+            name="consumer",
+        )
+        monitor = (
+            asyncio.create_task(
+                keep_stats_fresh(the_bus, cfg.bus_group, cfg.bus_stats_interval_seconds),
+                name="bus-monitor",
+            )
+            if the_bus is not None
+            else None
         )
         maintenance = Maintenance(
             con,
@@ -100,6 +137,8 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
             scheduler.start()
         app.state.started_at = datetime.now(UTC)
         app.state.source = src
+        app.state.bus = the_bus
+        app.state.bus_source = bus_source
         app.state.con = con
         app.state.raw_store = raw_store
         app.state.detection = detection
@@ -124,6 +163,11 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
                 except TimeoutError:
                     consumer.cancel()
                     await asyncio.gather(consumer, return_exceptions=True)
+            if monitor is not None:
+                monitor.cancel()
+                await asyncio.gather(monitor, return_exceptions=True)
+            if the_bus is not None and bus is None:  # we built it, we close it
+                await the_bus.close()
             con.close()
 
     app = FastAPI(title="PulseStream", version=__version__, lifespan=lifespan)
@@ -168,6 +212,8 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
             "source": bool(getattr(state.source, "connected", True)),
             "fresh": silence <= cfg.ready_max_silence_seconds,
         }
+        if state.bus is not None:
+            checks["bus"] = await state.bus.ping()
         is_ready = all(checks.values())
         response.status_code = 200 if is_ready else 503
         return ReadinessStatus(
@@ -182,6 +228,29 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
         """Prometheus text exposition of every pulsestream_* series."""
         body, content_type = metrics.render()
         return Response(content=body, media_type=content_type)
+
+    @app.get("/bus", response_model=BusStatus)
+    async def bus_status(request: Request) -> BusStatus:
+        """The stream and this process's consumer group; mode "none" without a bus."""
+        state = request.app.state
+        if state.bus is None:
+            return BusStatus(mode="none")
+        stats = await state.bus.stats(cfg.bus_group)
+        src: BusSource | None = state.bus_source
+        return BusStatus(
+            mode="redis",
+            stream=cfg.bus_stream,
+            group=cfg.bus_group,
+            consumer=src.consumer if src is not None else None,
+            length=stats.length,
+            first_id=stats.first_id,
+            last_id=stats.last_id,
+            pending=stats.pending,
+            lag=stats.lag,
+            inflight=src.inflight if src is not None else 0,
+            delivered_total=src.delivered_total if src is not None else 0,
+            acked_total=src.acked_total if src is not None else 0,
+        )
 
     @app.get("/stats/latest", response_model=StatsLatest)
     async def stats_latest(request: Request) -> StatsLatest:

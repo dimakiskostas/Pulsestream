@@ -7,7 +7,13 @@ import httpx
 import polars as pl
 import pytest
 
-from pulsestream.dashboard.data import MINUTELY_SCHEMA, TOP_SCHEMA, ApiClient
+from pulsestream.dashboard.data import (
+    ANOMALIES_SCHEMA,
+    FEATURES_SCHEMA,
+    MINUTELY_SCHEMA,
+    TOP_SCHEMA,
+    ApiClient,
+)
 
 CANNED = {
     "/health": {
@@ -58,6 +64,57 @@ CANNED = {
     "/entities/top": {
         "minutes": 60,
         "entities": [{"entity": "enwiki", "count": 9, "bot_count": 1}],
+    },
+    "/anomalies": {
+        "minutes": 60,
+        "entity": None,
+        "metric": None,
+        "severity": None,
+        "anomalies": [
+            {
+                "anomaly_id": "4b2c6a4e-0f45-5d0b-9b7d-5f9a1c2d3e4f",
+                "detected_at": "2026-10-11T10:53:00Z",
+                "entity": "enwiki",
+                "metric": "edit_rate",
+                "value": 40.0,
+                "expected": 10.0,
+                "score": 20.0,
+                "method": "ewma_band",
+                "severity": "critical",
+                "window_start": "2026-10-11T10:52:00Z",
+                "window_end": "2026-10-11T10:53:00Z",
+                "event_id": None,
+                "model_version": None,
+                "details": "count 40 outside [5.5, 14.5]",
+            }
+        ],
+    },
+    "/anomalies/summary": {
+        "minutes": 60,
+        "total": 1,
+        "by_severity": {"critical": 1},
+        "by_metric": {"edit_rate": 1},
+        "top_entities": [{"entity": "enwiki", "count": 1}],
+    },
+    "/features": {
+        "entity": "enwiki",
+        "minutes": 60,
+        "k": 3.0,
+        "points": [
+            {
+                "window_start": "2026-10-11T10:52:00Z",
+                "window_end": "2026-10-11T10:53:00Z",
+                "count": 40,
+                "rate_per_min": 40.0,
+                "ewma": 10.0,
+                "mean": 10.0,
+                "std": 1.5,
+                "zscore": 20.0,
+                "upper": 14.5,
+                "lower": 5.5,
+                "is_anomaly": True,
+            }
+        ],
     },
 }
 
@@ -126,6 +183,24 @@ def test_top_entities_frame() -> None:
     assert frame.equals(
         pl.DataFrame([{"entity": "enwiki", "count": 9, "bot_count": 1}], schema=TOP_SCHEMA)
     )
+
+
+def test_anomalies_summary_and_features_frames() -> None:
+    client, seen = scripted()
+
+    found = client.anomalies(limit=5)
+    assert found.schema == ANOMALIES_SCHEMA and found.height == 1
+    assert found["entity"][0] == "enwiki" and found["severity"][0] == "critical"
+    assert found["window_start"][0] == datetime(2026, 10, 11, 10, 52, tzinfo=UTC)
+    assert seen[-1].url.params["limit"] == "5"
+
+    summary = client.anomaly_summary(minutes=30)
+    assert summary["total"] == 1 and seen[-1].url.params["minutes"] == "30"
+
+    band = client.features("enwiki")
+    assert band.schema == FEATURES_SCHEMA
+    assert band["upper"][0] == 14.5 and band["lower"][0] == 5.5 and band["is_anomaly"][0] is True
+    assert seen[-1].url.params["entity"] == "enwiki"
 
 
 def test_http_errors_propagate() -> None:

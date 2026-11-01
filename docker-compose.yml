@@ -1,0 +1,82 @@
+# One command brings everything up:
+#
+#   docker compose up --build                       # api + dashboard
+#   docker compose --profile monitoring up --build  # + Prometheus and Grafana
+#   PULSE_SOURCE=fake docker compose up --build     # offline: replays the committed fixture
+#
+# A .env file next to this one is read for the ${...} values. Images are tagged
+# for GHCR so the same file serves a server that pulls what CI pushed:
+#   IMAGE_TAG=v0.4.0 docker compose pull && docker compose up -d
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: api
+    image: ghcr.io/dimakiskostas/pulsestream-api:${IMAGE_TAG:-latest}
+    ports:
+      - "8000:8000"
+    environment:
+      PULSE_LOG_FORMAT: json
+      PULSE_LOG_LEVEL: ${PULSE_LOG_LEVEL:-INFO}
+      PULSE_SOURCE: ${PULSE_SOURCE:-wikimedia}
+      PULSE_FIXTURE_PATH: /fixtures/sample_events.jsonl # read when PULSE_SOURCE=fake
+      PULSE_FIXTURE_DELAY: ${PULSE_FIXTURE_DELAY:-0.05}
+    volumes:
+      - pulsestream-data:/data
+      - ./tests/fixtures:/fixtures:ro
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: dashboard
+    image: ghcr.io/dimakiskostas/pulsestream-dashboard:${IMAGE_TAG:-latest}
+    ports:
+      - "8501:8501"
+    environment:
+      PULSE_API_URL: http://api:8000
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    profiles: [monitoring]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/prometheus-rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.3.0
+    profiles: [monitoring]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  pulsestream-data:
+  prometheus-data:
+  grafana-data:

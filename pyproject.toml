@@ -33,6 +33,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "bandit>=1.9.4",
     "mypy>=2.3.0",
     "pandera[polars]>=0.32.1",
     "pre-commit>=4.6.1",
@@ -60,6 +61,15 @@ select = [
 [tool.mypy]
 python_version = "3.12"
 strict = true
+
+[tool.bandit]
+# Code scan (HLD section 9). Skipped checks, with the reason:
+#   B608  SQL strings are built from fixed literals or allow-listed values; request values
+#         always travel as bound parameters (see the API and storage tests)
+#   B311  random is used for backoff jitter and synthetic test series, never for secrets
+#   B404/B603  one subprocess call, a fixed argv list without a shell (streamlit run)
+exclude_dirs = ["tests"]
+skips = ["B608", "B311", "B404", "B603"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

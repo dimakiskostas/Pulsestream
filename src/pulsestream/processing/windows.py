@@ -89,8 +89,9 @@ class TumblingCounter:
         return sorted(closed, key=lambda w: (w.window_start, w.entity))
 
     def _close_due(self) -> list[ClosedWindow]:
-        assert self._watermark is not None
         closed: list[ClosedWindow] = []
+        if self._watermark is None:
+            return closed
         for entity, state in list(self._entities.items()):
             for start in sorted(s for s in state.open if s + self._window <= self._watermark):
                 closed.extend(self._emit(entity, state, start))

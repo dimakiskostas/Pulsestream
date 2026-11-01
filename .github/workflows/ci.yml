@@ -1,23 +1,140 @@
-name : ci
-on :
-    push:
-        branches: [main]
-    pull_request :
+# CI/CD: lint + types + security scan + tests on every change; images built on
+# every change (so a broken Dockerfile fails the PR), pushed to GHCR from main
+# and from v* tags; a tag deploys to the VPS when DEPLOY_ENABLED is set.
+#
+# Required for the deploy job (repository settings):
+#   variables: DEPLOY_ENABLED=true, DEPLOY_PATH=/opt/pulsestream (optional)
+#   environment "production" secrets: DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY
+# Without them the deploy job is skipped and everything else still runs.
 
-jobs :
-    test:
-        runs-on: ubuntu-latest
-        strategy :
-            matrix :
-                python-version : ["3.12", "3.13"]
-        steps:
-            - uses : actions/checkout@v4
-            - uses : astral-sh/setup-uv@v5
-              with :
-                python-version : ${{ matrix.python-version }}
-                enable-cache : true
-            - run : uv sync --dev
-            - run : uv run ruff check .
-            - run : uv run ruff format --check .
-            - run : uv run mypy src
-            - run : uv run pytest
+name: ci
+
+on:
+  push:
+    branches: [main, "phase-*"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - run: uv sync --dev
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy src
+      - run: uv run bandit -q -c pyproject.toml -r src
+      - run: uv run pytest
+      - name: Detector scorecard (synthetic anomalies)
+        run: uv run pulsestream eval
+
+  image:
+    # Both images are built on every change, which proves the Dockerfile in the PR;
+    # they are pushed only from main and from version tags.
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false # scan and report both images even when one fails
+      matrix:
+        target: [api, dashboard]
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/pulsestream-${{ matrix.target }}
+      PUSH: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: env.PUSH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+      - name: Validate docker-compose.yml
+        run: docker compose --profile monitoring config --quiet
+      - name: Build (local load, for the scan)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: ${{ matrix.target }}
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,scope=${{ matrix.target }},mode=max
+      - name: Smoke test the image
+        run: docker run --rm ${{ fromJSON(steps.meta.outputs.json).tags[0] }} --version
+      - name: Scan the image (trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+      - name: Push
+        if: env.PUSH == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: ${{ matrix.target }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.target }}
+
+  deploy:
+    # A git tag v* is the release. The VPS pulls the tagged images and restarts
+    # the compose stack over SSH (HLD section 9: the deploy target decision).
+    needs: image
+    if: startsWith(github.ref, 'refs/tags/v') && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read # the host logs in to GHCR with this job's token
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd ${{ vars.DEPLOY_PATH || '/opt/pulsestream' }}
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            export IMAGE_TAG=${{ github.ref_name }}
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker compose ps

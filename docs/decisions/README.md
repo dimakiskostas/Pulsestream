@@ -19,6 +19,9 @@ supersedes the old one.
 | 0010 | Rate detector: tumbling minutes, EWMA ± 3·std, four guards     | D6, §7, §12  | 3     |
 | 0011 | Detector quality is measured by injecting synthetic anomalies  | §10, §12     | 3     |
 | 0012 | Byte-delta detector: a large-edit detector calibrated on live data | §5, §12   | 3     |
+| 0013 | Deploy target: one VPS, Docker Compose, SSH deploy from a tag   | §9, §13      | 4     |
+| 0014 | Observability: one log format, fixed metric series, two probes | §11          | 4     |
+| 0015 | CI builds, scans and publishes images; a git tag is the release | §9, §13      | 4     |
 
 Template: **Status** (proposed / accepted / superseded by NNNN), **Context**,
 **Decision**, **Alternatives considered**, **Consequences**, **Revisit if**.

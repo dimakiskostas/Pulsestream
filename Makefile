@@ -1,7 +1,7 @@
 # PulseStream task runner. Every target is a thin alias over `uv run ...`, so on a
 # machine without make (Windows) you can type the underlying command instead.
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test check precommit run run-replay dashboard replay capture eval check-data clean
+.PHONY: help install lint format typecheck security test check precommit run run-replay dashboard replay capture eval check-data image up monitoring down logs clean
 
 help:            ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -21,10 +21,13 @@ format:          ## ruff autofix + format
 typecheck:       ## mypy (strict) on src
 	uv run mypy src
 
+security:        ## bandit code scan on src
+	uv run bandit -q -c pyproject.toml -r src
+
 test:            ## pytest with coverage
 	uv run pytest
 
-check: lint typecheck test   ## everything CI runs
+check: lint typecheck security test   ## everything CI runs
 
 precommit:       ## run all pre-commit hooks on every file
 	uv run pre-commit run --all-files
@@ -49,6 +52,22 @@ eval:            ## score the rate detector against injected synthetic anomalies
 
 check-data:      ## pandera data-quality gates on the local DB and lake
 	uv run pulsestream check --db pulsestream.duckdb --lake data/raw
+
+image:           ## build both images locally (needs BuildKit): pulsestream-{api,dashboard}:dev
+	docker build -f docker/Dockerfile --target api -t pulsestream-api:dev .
+	docker build -f docker/Dockerfile --target dashboard -t pulsestream-dashboard:dev .
+
+up:              ## api + dashboard in containers (http://localhost:8000, http://localhost:8501)
+	docker compose up --build -d
+
+monitoring:      ## the same plus Prometheus (:9090) and Grafana (:3000)
+	docker compose --profile monitoring up --build -d
+
+down:            ## stop the compose stack; the data volumes are kept
+	docker compose --profile monitoring down
+
+logs:            ## follow the API container's JSON logs
+	docker compose logs -f api
 
 clean:           ## remove caches and local databases
 	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage *.duckdb *.duckdb.wal

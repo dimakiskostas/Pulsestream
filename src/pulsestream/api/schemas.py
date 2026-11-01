@@ -23,6 +23,19 @@ class HealthStatus(BaseModel):
     pipeline: PipelineStatus
 
 
+class LivenessStatus(BaseModel):
+    status: Literal["alive"]
+
+
+class ReadinessStatus(BaseModel):
+    """Can this process do useful work right now? Each check is one reason it might not."""
+
+    ready: bool
+    checks: dict[str, bool]  # consumer, producer, store, source, fresh
+    last_processed_at: datetime | None
+    silence_seconds: float  # seconds since the last processed batch (or since start)
+
+
 class StatsLatest(BaseModel):
     events_total: int
     events_last_min: int

@@ -14,6 +14,10 @@ from pulsestream.sources.wikimedia import DEFAULT_USER_AGENT, STREAM_URL
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="PULSE_", env_file=".env", extra="ignore")
 
+    # --- logging -------------------------------------------------------------
+    log_level: str = "INFO"
+    log_format: Literal["console", "json"] = "console"  # json in containers
+
     # --- storage -------------------------------------------------------------
     db_path: str = "pulsestream.duckdb"
     lake_root: str = "data/raw"  # partitioned Parquet raw store (immutable, replayable)
@@ -31,6 +35,7 @@ class Settings(BaseSettings):
     stream_url: str = STREAM_URL
     user_agent: str = DEFAULT_USER_AGENT
     read_timeout: float = 60.0  # seconds without bytes before the stream counts as dead
+    ready_max_silence_seconds: int = 120  # /health/ready fails after this long without a batch
 
     # --- detection: rolling features and statistical detectors ------------------
     detection_enabled: bool = True

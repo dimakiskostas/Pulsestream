@@ -32,6 +32,11 @@ try:
     jobs = client.jobs()
     minutely = client.minutely(minutes)
     top = client.top_entities(minutes)
+    summary = client.anomaly_summary(minutes)
+    anomalies = client.anomalies(minutes)
+    focus_default = str(top["entity"][0]) if not top.is_empty() else "enwiki"
+    focus = st.sidebar.text_input("Control-band chart for", value=focus_default)
+    band = client.features(focus, minutes)
 except httpx.HTTPError as exc:
     st.error(f"API not reachable at {api_url}: {exc}")
     st.stop()
@@ -85,6 +90,27 @@ with right:
         ],
         hide_index=True,
     )
+
+st.subheader(f"Anomalies, last {minutes} min")
+a1, a2, a3 = st.columns(3)
+a1.metric("Findings", summary["total"])
+a2.metric("Critical", summary["by_severity"].get("critical", 0))
+a3.metric(
+    "Edit-rate / byte-delta",
+    f"{summary['by_metric'].get('edit_rate', 0)} / {summary['by_metric'].get('byte_delta', 0)}",
+)
+if anomalies.is_empty():
+    st.info(
+        "No findings in the window. Each wiki needs ~10 minutes of history before it is judged."
+    )
+else:
+    st.dataframe(anomalies, hide_index=True)
+
+st.subheader(f"Control band: {focus}")
+if band.is_empty():
+    st.info(f"No closed windows for {focus} in the window yet.")
+else:
+    st.line_chart(band, x="window_start", y=["count", "ewma", "upper", "lower"])
 
 st.caption(f"Reading {api_url} at {datetime.now(UTC):%H:%M:%S} UTC")
 if auto_refresh:

@@ -37,6 +37,18 @@ class Settings(BaseSettings):
     read_timeout: float = 60.0  # seconds without bytes before the stream counts as dead
     ready_max_silence_seconds: int = 120  # /health/ready fails after this long without a batch
 
+    # --- bus: "none" keeps the in-process queue (one process); "redis" splits ingestion
+    # from processing into two services that meet in a Redis Stream (ADR 0016) ---------
+    bus: Literal["none", "redis"] = "none"
+    redis_url: str = "redis://localhost:6379/0"
+    bus_stream: str = "pulsestream:events"
+    bus_group: str = "processors"  # the consumer group the API process reads as
+    bus_consumer: str = ""  # this process's consumer name; empty = the host name
+    bus_retention_minutes: int = 360  # entries older than this are trimmed on publish
+    bus_read_count: int = 100  # entries per read
+    bus_block_ms: int = 1000  # how long a read waits for new entries
+    bus_claim_idle_seconds: int = 60  # take over another consumer's entries idle this long
+
     # --- detection: rolling features and statistical detectors ------------------
     detection_enabled: bool = True
     window_seconds: int = 60  # tumbling window for per-entity edit counts

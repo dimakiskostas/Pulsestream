@@ -36,6 +36,19 @@ class ReadinessStatus(BaseModel):
     silence_seconds: float  # seconds since the last processed batch (or since start)
 
 
+class IngestStats(BaseModel):
+    """The ingest service: what it pushed into the bus, and what the stream holds."""
+
+    published_total: int
+    batches: int
+    publish_failures: int
+    last_published_at: datetime | None
+    queue_depth: int
+    stream_length: int
+    stream_first_id: str | None
+    stream_last_id: str | None
+
+
 class StatsLatest(BaseModel):
     events_total: int
     events_last_min: int

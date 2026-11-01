@@ -17,8 +17,14 @@ from pulsestream import __version__
 from pulsestream.api.schemas import (
     AggPoint,
     AggregatesResponse,
+    AnomaliesResponse,
+    AnomalyOut,
+    AnomalySummary,
     Bucket,
+    EntityAnomalies,
     EntityCount,
+    FeaturePoint,
+    FeaturesResponse,
     HealthStatus,
     JobsResponse,
     JobStatus,
@@ -32,7 +38,7 @@ from pulsestream.api.schemas import (
 )
 from pulsestream.config import Settings
 from pulsestream.config import settings as default_settings
-from pulsestream.models import RawEvent
+from pulsestream.models import Metric, RawEvent, Severity
 from pulsestream.pipeline import run_consumer, run_producer
 from pulsestream.processing.detection import DetectionStage
 from pulsestream.processing.processor import StreamProcessor
@@ -226,6 +232,99 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
         )
         entities = [EntityCount(entity=r[0], count=r[1], bot_count=r[2]) for r in rows]
         return TopEntitiesResponse(minutes=minutes, entities=entities)
+
+    @app.get("/anomalies", response_model=AnomaliesResponse)
+    async def anomalies(
+        request: Request,
+        minutes: int = Query(default=60, ge=1, le=7 * 24 * 60),
+        entity: str | None = Query(default=None, max_length=64),
+        metric: Metric | None = None,
+        severity: Severity | None = None,
+        limit: int = Query(default=100, ge=1, le=1000),
+    ) -> AnomaliesResponse:
+        """Findings whose window started within the last ``minutes``, newest first."""
+        clauses = ["window_start >= now() - (? * INTERVAL '1 minute')"]
+        params: list[object] = [minutes]
+        for column, value in (("entity", entity), ("metric", metric), ("severity", severity)):
+            if value is not None:
+                clauses.append(f"{column} = ?")
+                params.append(value)
+        rows = await aquery(
+            request.app.state.con,
+            "SELECT anomaly_id, detected_at, entity, metric, value, expected, score, method, "
+            "severity, window_start, window_end, event_id, model_version, details "
+            f"FROM anomalies WHERE {' AND '.join(clauses)} "
+            "ORDER BY window_start DESC, entity LIMIT ?",
+            [*params, limit],
+        )
+        return AnomaliesResponse(
+            minutes=minutes,
+            entity=entity,
+            metric=metric,
+            severity=severity,
+            anomalies=[AnomalyOut.from_row(r) for r in rows],
+        )
+
+    @app.get("/anomalies/summary", response_model=AnomalySummary)
+    async def anomalies_summary(
+        request: Request, minutes: int = Query(default=60, ge=1, le=7 * 24 * 60)
+    ) -> AnomalySummary:
+        """Counts of findings in the window by severity and metric, and the entities with most."""
+        con = request.app.state.con
+        where = "FROM anomalies WHERE window_start >= now() - (? * INTERVAL '1 minute')"
+        by_severity = await aquery(con, f"SELECT severity, count(*) {where} GROUP BY 1", [minutes])
+        by_metric = await aquery(con, f"SELECT metric, count(*) {where} GROUP BY 1", [minutes])
+        top = await aquery(
+            con,
+            f"SELECT entity, count(*) AS n {where} GROUP BY 1 ORDER BY n DESC, entity LIMIT 10",
+            [minutes],
+        )
+        return AnomalySummary(
+            minutes=minutes,
+            total=sum(int(n) for _, n in by_severity),
+            by_severity={s: int(n) for s, n in by_severity},
+            by_metric={m: int(n) for m, n in by_metric},
+            top_entities=[EntityAnomalies(entity=e, count=int(n)) for e, n in top],
+        )
+
+    @app.get("/features", response_model=FeaturesResponse)
+    async def features(
+        request: Request,
+        entity: str = Query(max_length=64),
+        minutes: int = Query(default=60, ge=1, le=7 * 24 * 60),
+    ) -> FeaturesResponse:
+        """One entity's closed windows with the control band the detector judged them against."""
+        rows = await aquery(
+            request.app.state.con,
+            "SELECT window_start, window_end, count, rate_per_min, ewma, mean, std, zscore, "
+            "is_anomaly FROM features_rolling "
+            "WHERE entity = ? AND window_start >= now() - (? * INTERVAL '1 minute') "
+            "ORDER BY window_start",
+            [entity, minutes],
+        )
+        points = []
+        for start, end, count, rate, ewma, mean, std, zscore, flagged in rows:
+            upper = lower = None
+            if ewma is not None and std is not None:
+                spread = max(std, cfg.min_std)
+                upper = ewma + cfg.band_k * spread
+                lower = max(0.0, ewma - cfg.band_k * spread)
+            points.append(
+                FeaturePoint(
+                    window_start=start,
+                    window_end=end,
+                    count=count,
+                    rate_per_min=rate,
+                    ewma=ewma,
+                    mean=mean,
+                    std=std,
+                    zscore=zscore,
+                    upper=upper,
+                    lower=lower,
+                    is_anomaly=flagged,
+                )
+            )
+        return FeaturesResponse(entity=entity, minutes=minutes, k=cfg.band_k, points=points)
 
     @app.get("/lake", response_model=LakeStats)
     async def lake(request: Request) -> LakeStats:

@@ -45,17 +45,17 @@ jobs:
         run: uv run pulsestream eval
 
   image:
-    # Both images are built on every change, which proves the Dockerfile in the PR;
-    # they are pushed only from main and from version tags.
+    # All three images are built on every change, which proves the Dockerfile in the
+    # PR; they are pushed only from main and from version tags.
     needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     strategy:
-      fail-fast: false # scan and report both images even when one fails
+      fail-fast: false # scan and report every image even when one fails
       matrix:
-        target: [api, dashboard]
+        target: [api, dashboard, ingest]
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/pulsestream-${{ matrix.target }}
       PUSH: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}

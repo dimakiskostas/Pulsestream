@@ -1,14 +1,54 @@
 # One command brings everything up:
 #
-#   docker compose up --build                       # api + dashboard
+#   docker compose up --build                       # redis + ingest + api + dashboard
 #   docker compose --profile monitoring up --build  # + Prometheus and Grafana
-#   PULSE_SOURCE=fake docker compose up --build     # offline: replays the committed fixture
+#   PULSE_SOURCE=fake docker compose up --build     # offline: ingest replays the committed fixture
 #
-# A .env file next to this one is read for the ${...} values. Images are tagged
-# for GHCR so the same file serves a server that pulls what CI pushed:
-#   IMAGE_TAG=v0.4.0 docker compose pull && docker compose up -d
+# Ingestion and processing are separate services that meet in a Redis Stream
+# (ADR 0016): `ingest` publishes the source, `api` consumes the stream, writes
+# DuckDB and serves the endpoints. A .env file next to this one is read for the
+# ${...} values. Images are tagged for GHCR so the same file serves a server
+# that pulls what CI pushed:
+#   IMAGE_TAG=v0.5.0 docker compose pull && docker compose up -d
 
 services:
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", ""]
+    ports:
+      - "127.0.0.1:6379:6379" # host access for `pulsestream replay --from-bus`; not public
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  ingest:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ingest
+    image: ghcr.io/dimakiskostas/pulsestream-ingest:${IMAGE_TAG:-latest}
+    ports:
+      - "8001:8001"
+    environment:
+      PULSE_LOG_FORMAT: json
+      PULSE_LOG_LEVEL: ${PULSE_LOG_LEVEL:-INFO}
+      PULSE_BUS: redis
+      PULSE_REDIS_URL: redis://redis:6379/0
+      PULSE_SOURCE: ${PULSE_SOURCE:-wikimedia}
+      PULSE_FIXTURE_PATH: /fixtures/sample_events.jsonl # read when PULSE_SOURCE=fake
+      PULSE_FIXTURE_DELAY: ${PULSE_FIXTURE_DELAY:-0.05}
+    volumes:
+      - ./tests/fixtures:/fixtures:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -20,12 +60,14 @@ services:
     environment:
       PULSE_LOG_FORMAT: json
       PULSE_LOG_LEVEL: ${PULSE_LOG_LEVEL:-INFO}
-      PULSE_SOURCE: ${PULSE_SOURCE:-wikimedia}
-      PULSE_FIXTURE_PATH: /fixtures/sample_events.jsonl # read when PULSE_SOURCE=fake
-      PULSE_FIXTURE_DELAY: ${PULSE_FIXTURE_DELAY:-0.05}
+      PULSE_BUS: redis
+      PULSE_REDIS_URL: redis://redis:6379/0
+      PULSE_BUS_CONSUMER: api # fixed: a recreated container must find its own pending entries
     volumes:
       - pulsestream-data:/data
-      - ./tests/fixtures:/fixtures:ro
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   dashboard:
@@ -77,6 +119,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  redis-data:
   pulsestream-data:
   prometheus-data:
   grafana-data:

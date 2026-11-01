@@ -53,11 +53,12 @@ eval:            ## score the rate detector against injected synthetic anomalies
 check-data:      ## pandera data-quality gates on the local DB and lake
 	uv run pulsestream check --db pulsestream.duckdb --lake data/raw
 
-image:           ## build both images locally (needs BuildKit): pulsestream-{api,dashboard}:dev
+image:           ## build the three images locally (needs BuildKit): pulsestream-{api,dashboard,ingest}:dev
 	docker build -f docker/Dockerfile --target api -t pulsestream-api:dev .
 	docker build -f docker/Dockerfile --target dashboard -t pulsestream-dashboard:dev .
+	docker build -f docker/Dockerfile --target ingest -t pulsestream-ingest:dev .
 
-up:              ## api + dashboard in containers (http://localhost:8000, http://localhost:8501)
+up:              ## redis + ingest + api + dashboard in containers (:8001, :8000, :8501)
 	docker compose up --build -d
 
 monitoring:      ## the same plus Prometheus (:9090) and Grafana (:3000)
@@ -66,8 +67,11 @@ monitoring:      ## the same plus Prometheus (:9090) and Grafana (:3000)
 down:            ## stop the compose stack; the data volumes are kept
 	docker compose --profile monitoring down
 
-logs:            ## follow the API container's JSON logs
-	docker compose logs -f api
+logs:            ## follow the ingest and API containers' JSON logs
+	docker compose logs -f ingest api
+
+replay-bus:      ## rebuild replay.duckdb from the bus's recent window (the stack's redis on localhost)
+	uv run pulsestream replay --from-bus --db replay.duckdb
 
 clean:           ## remove caches and local databases
 	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage *.duckdb *.duckdb.wal

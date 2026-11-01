@@ -88,6 +88,38 @@
       ],
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"},
       "fieldConfig": {"defaults": {}, "overrides": []}
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Bus: stream length, lag, pending",
+      "gridPos": {"x": 0, "y": 22, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "max(pulsestream_bus_stream_length)", "legendFormat": "length"},
+        {"refId": "B", "expr": "max(pulsestream_bus_lag{job=\"pulsestream-api\"})", "legendFormat": "lag (not yet delivered)"},
+        {"refId": "C", "expr": "max(pulsestream_bus_pending{job=\"pulsestream-api\"})", "legendFormat": "pending (unacknowledged)"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Published to the bus per minute (ingest)",
+      "gridPos": {"x": 12, "y": 22, "w": 6, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "rate(pulsestream_bus_published_total[1m]) * 60", "legendFormat": "published"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Bus redeliveries (1h)",
+      "gridPos": {"x": 18, "y": 22, "w": 6, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum(increase(pulsestream_bus_redeliveries_total[1h]))"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 100}, {"color": "red", "value": 1000}]}}, "overrides": []}
     }
   ]
 }

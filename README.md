@@ -20,10 +20,10 @@ branch per phase.
 | 1     | Vertical slice: live source → queue → validate → DuckDB → API    | done    |
 | 2     | Storage + analytics: Parquet lake, aggregates, scheduler, dashboard, replay, quality gates | done |
 | 3     | Anomaly detection v1: event-time windows, EWMA control band, byte-delta MAD, synthetic evaluation | done |
-| 4     | CI/CD + observability: containers, GHCR, metrics, health         | next    |
-| 5     | Streaming decoupling: broker, separate services, replay          | planned |
+| 4     | CI/CD + observability: structured logs, Prometheus metrics, probes, images, compose + Grafana, CI build/scan/publish, tag deploy | done |
+| 5     | Streaming decoupling: broker, separate services, replay          | next    |
 
-## How it works (Phase 3)
+## How it works (Phase 4)
 
 ```
 Wikimedia EventStreams ──SSE──▶ WikimediaSource ──▶ asyncio.Queue ──▶ consumer ──▶ StreamProcessor
@@ -37,16 +37,21 @@ Wikimedia EventStreams ──SSE──▶ WikimediaSource ──▶ asyncio.Queu
                                                               ByteDeltaDetector (|delta| vs median/MAD)
                                                               ──▶ features_rolling, anomalies
                                    APScheduler: refresh aggregates (60 s), compact lake (10 min)
-                                   FastAPI: /health /stats/latest /timeseries /aggregates/minutely
-                                            /entities/top /lake /jobs /anomalies /anomalies/summary
-                                            /features                        ◀──HTTP── Streamlit dashboard
+                                   FastAPI: /health/live /health/ready /metrics /stats/latest /timeseries
+                                            /aggregates/minutely /entities/top /lake /jobs /anomalies
+                                            /anomalies/summary /features     ◀──HTTP── Streamlit dashboard
+                                   structlog ──▶ JSON lines     prometheus_client ◀──scrape── Prometheus ──▶ Grafana
 ```
 
 One API process owns the pipeline, the DuckDB writer, the detectors and the
 scheduler. The dashboard is a second process that reads only the API.
 `EventSource` is a protocol, so the live source, the replay `FakeSource` and
 the lake's `ParquetSource` are interchangeable, and a replay from the lake
-reproduces the live findings exactly.
+reproduces the live findings exactly. In containers the same two processes
+run as the `api` and `dashboard` images; `/health/live` is the container
+healthcheck, `/health/ready` says whether the pipeline is doing useful work,
+and `/metrics` feeds Prometheus. [`docs/operations.md`](docs/operations.md)
+is the runbook.
 
 ## Quickstart
 
@@ -95,6 +100,27 @@ uv run pulsestream eval                                               # detector
 uv run pulsestream capture -n 500 -o tests/fixtures/sample_events.jsonl
 ```
 
+### With Docker
+
+Requires Docker with BuildKit and the Compose plugin.
+
+```bash
+docker compose up --build -d                        # api :8000, dashboard :8501 (make up)
+```
+
+```bash
+docker compose --profile monitoring up --build -d   # + Prometheus :9090, Grafana :3000 (make monitoring)
+```
+
+```bash
+PULSE_SOURCE=fake docker compose up --build -d       # offline, replaying the committed fixture
+```
+
+The images log JSON, run as a non-root user and keep the database and the
+lake in the `pulsestream-data` volume. Grafana shows the provisioned
+"PulseStream operations" dashboard; Prometheus evaluates the alert rules in
+[`docker/prometheus-rules.yml`](docker/prometheus-rules.yml).
+
 ## Configuration
 
 Settings are typed (`pydantic-settings`), prefixed `PULSE_`, and can come from the
@@ -114,21 +140,27 @@ the defaults live in [`src/pulsestream/config.py`](src/pulsestream/config.py).
 | `PULSE_DETECTION_ENABLED`           | `true`               | run the detectors in the pipeline        |
 | `PULSE_WINDOW_SECONDS` / `_LATENESS_SECONDS` | `60` / `10` | tumbling window and allowed lateness    |
 | `PULSE_BAND_K` / `_WARMUP_WINDOWS`  | `3.0` / `10`         | EWMA ± k·std; windows before judging     |
-| `PULSE_BYTE_DELTA_MIN_BYTES`        | `1000`               | smaller edits are never findings         |
+| `PULSE_BYTE_DELTA_MIN_BYTES`        | `50000`              | smaller edits are never findings         |
 | `PULSE_API_URL`                     | `http://127.0.0.1:8000` | what the dashboard reads              |
+| `PULSE_LOG_LEVEL` / `_LOG_FORMAT`   | `INFO` / `console`   | `json` in containers                     |
+| `PULSE_READY_MAX_SILENCE_SECONDS`   | `120`                | `/health/ready` is 503 after this long without a batch |
 
 ## Development
 
 ```bash
-make check        # = uv run ruff check . && uv run ruff format --check . && uv run mypy src && uv run pytest
+make check        # = ruff check, ruff format --check, mypy src, bandit, pytest (what CI runs)
 make precommit    # = uv run pre-commit run --all-files
+make image        # = docker build both targets of docker/Dockerfile
 ```
 
 Tests never touch the network: the live source is tested against an httpx mock
 transport, the pipeline/API tests replay `tests/fixtures/sample_events.jsonl`
 (500 real events captured on 2026-10-11), the detectors are scored against
 synthetic series with injected anomalies, and the dashboard runs headlessly
-under Streamlit's `AppTest`. CI runs the same commands on Python 3.12 and 3.13.
+under Streamlit's `AppTest`. CI runs the same commands on Python 3.12 and 3.13,
+then builds, smoke-tests and scans both images on every change, pushes them to
+GHCR from `main` and from `v*` tags, and deploys a tag over SSH when a server
+is configured ([`docs/operations.md`](docs/operations.md)).
 
 ## Repository layout
 
@@ -136,6 +168,7 @@ under Streamlit's `AppTest`. CI runs the same commands on Python 3.12 and 3.13.
 src/pulsestream/
   cli.py              pulsestream api | capture | replay | dashboard | check | eval
   config.py           typed settings (PULSE_*)
+  common/             logging.py (structlog + stdlib, console or JSON), metrics.py (Prometheus series)
   models.py           RawEvent, WikiEvent (+ from_raw filter), FeatureSnapshot, Anomaly
   pipeline.py         producer / consumer over a bounded asyncio.Queue; Processor protocol
   processing/         StreamProcessor (lake -> validate -> DuckDB -> detection),
@@ -149,11 +182,16 @@ src/pulsestream/
   dashboard/          Streamlit page + its HTTP data layer
   quality.py          pandera gates for the lake and the tables
   replay.py, capture.py
-tests/                unit, integration (fixture replay), API contract, detector evaluation, dashboard, quality
+tests/                unit, integration (fixture replay), API contract, detector evaluation, dashboard, quality,
+                      logging, metrics, instrumentation, probes
+docker/               Dockerfile (targets api, dashboard), Prometheus config + alert rules, Grafana provisioning
+docker-compose.yml    api + dashboard; --profile monitoring adds Prometheus and Grafana
+.github/workflows/    ci.yml: test matrix, image build + scan + push, deploy on v* tags
 docs/
   hld.pdf, tutorial.pdf      the design and the guided tutorial the build follows
   tutorial/                  the worked tutorial for this repository, one chapter per phase
-  decisions/                 architecture decision records (ADR 0001-0012)
+  decisions/                 architecture decision records (ADR 0001-0015)
+  operations.md              runbook: run with Docker, what to watch, release and deploy
 ```
 
 ## Reading the history

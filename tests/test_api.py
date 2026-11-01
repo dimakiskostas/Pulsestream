@@ -3,6 +3,7 @@
 import asyncio
 import time
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -11,9 +12,10 @@ import pytest
 
 from pulsestream.api.app import create_app
 from pulsestream.config import Settings
-from pulsestream.models import RawEvent
+from pulsestream.models import Anomaly, FeatureSnapshot, RawEvent, anomaly_id
 from pulsestream.pipeline import BatchResult
 from pulsestream.sources.fake import FakeSource
+from pulsestream.storage.duck import write_anomalies, write_features
 from tests.factories import _raw, create_payload
 
 N_EVENTS = 10
@@ -58,6 +60,156 @@ async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
             yield c
 
 
+def finding(
+    key: str,
+    entity: str,
+    metric: str,
+    method: str,
+    severity: str,
+    *,
+    window_start: datetime,
+    score: float,
+    value: float,
+    event_id: str | None = None,
+) -> Anomaly:
+    return Anomaly(
+        anomaly_id=anomaly_id(method, entity, metric, key),
+        detected_at=window_start + timedelta(minutes=1),
+        entity=entity,
+        metric=metric,  # type: ignore[arg-type]
+        value=value,
+        expected=10.0,
+        score=score,
+        method=method,  # type: ignore[arg-type]
+        severity=severity,  # type: ignore[arg-type]
+        window_start=window_start,
+        window_end=window_start + timedelta(minutes=1),
+        event_id=event_id,
+        details=f"{metric} finding {key}",
+    )
+
+
+@pytest.fixture
+async def seeded_client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
+    """An app whose tables hold a few findings and a short feature series, minutes ago."""
+    cfg = Settings(
+        _env_file=None,
+        db_path=str(tmp_path / "seeded.duckdb"),
+        lake_root=str(tmp_path / "raw"),
+        scheduler_enabled=False,
+    )
+    app = create_app(cfg, source=FakeSource([]))
+    async with app.router.lifespan_context(app):
+        now = datetime.now(UTC).replace(second=0, microsecond=0)
+        start = now - timedelta(minutes=3)
+        write_features(
+            app.state.con,
+            [
+                FeatureSnapshot(
+                    entity="enwiki",
+                    window_start=start + timedelta(minutes=i),
+                    window_end=start + timedelta(minutes=i + 1),
+                    count=c,
+                    rate_per_min=float(c),
+                    ewma=10.0 if i else None,
+                    mean=10.0 if i else None,
+                    std=1.5 if i else None,
+                    zscore=(c - 10) / 1.5 if i else None,
+                    is_anomaly=(c == 40),
+                )
+                for i, c in enumerate([10, 11, 40])
+            ],
+        )
+        write_anomalies(
+            app.state.con,
+            [
+                finding("w", "enwiki", "edit_rate", "ewma_band", "critical",
+                        window_start=start + timedelta(minutes=2), score=20.0, value=40.0),
+                finding("e1", "dewiki", "byte_delta", "mad_zscore", "warn",
+                        window_start=start + timedelta(minutes=1), score=-4.2, value=-9000.0,
+                        event_id="e1"),
+                finding("old", "frwiki", "edit_rate", "ewma_band", "high",
+                        window_start=now - timedelta(days=2), score=6.0, value=30.0),
+            ],
+        )  # fmt: skip
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+
+
+async def test_anomalies_are_listed_newest_first_with_filters(
+    seeded_client: httpx.AsyncClient,
+) -> None:
+    body = (await seeded_client.get("/anomalies")).json()
+    assert body["minutes"] == 60 and [a["entity"] for a in body["anomalies"]] == [
+        "enwiki",
+        "dewiki",
+    ]
+    first = body["anomalies"][0]
+    assert first["metric"] == "edit_rate" and first["severity"] == "critical"
+    assert first["value"] == 40.0 and first["expected"] == 10.0 and first["score"] == 20.0
+    assert first["details"] == "edit_rate finding w" and first["event_id"] is None
+    assert len(first["anomaly_id"]) == 36
+
+    assert (
+        len(
+            (await seeded_client.get("/anomalies", params={"entity": "dewiki"})).json()["anomalies"]
+        )
+        == 1
+    )
+    assert (
+        len(
+            (await seeded_client.get("/anomalies", params={"metric": "edit_rate"})).json()[
+                "anomalies"
+            ]
+        )
+        == 1
+    )
+    assert (await seeded_client.get("/anomalies", params={"severity": "high"})).json()[
+        "anomalies"
+    ] == []
+    assert (
+        len((await seeded_client.get("/anomalies", params={"minutes": 5000})).json()["anomalies"])
+        == 3
+    )
+    assert (
+        len((await seeded_client.get("/anomalies", params={"limit": 1})).json()["anomalies"]) == 1
+    )
+    assert (await seeded_client.get("/anomalies", params={"metric": "nope"})).status_code == 422
+
+
+async def test_anomaly_summary_counts_by_severity_metric_and_entity(
+    seeded_client: httpx.AsyncClient,
+) -> None:
+    body = (await seeded_client.get("/anomalies/summary")).json()
+    assert body["total"] == 2
+    assert body["by_severity"] == {"critical": 1, "warn": 1}
+    assert body["by_metric"] == {"byte_delta": 1, "edit_rate": 1}
+    assert body["top_entities"] == [
+        {"entity": "dewiki", "count": 1},
+        {"entity": "enwiki", "count": 1},
+    ]
+    assert (await seeded_client.get("/anomalies/summary", params={"minutes": 5000})).json()[
+        "total"
+    ] == 3
+
+
+async def test_features_carry_the_control_band(seeded_client: httpx.AsyncClient) -> None:
+    body = (await seeded_client.get("/features", params={"entity": "enwiki"})).json()
+    assert body["entity"] == "enwiki" and body["k"] == 3.0
+    points = body["points"]
+    assert [p["count"] for p in points] == [10, 11, 40]
+    assert points[0]["ewma"] is None and points[0]["upper"] is None  # warm-up window
+    assert points[1]["upper"] == pytest.approx(14.5) and points[1]["lower"] == pytest.approx(5.5)
+    assert [p["is_anomaly"] for p in points] == [False, False, True]
+    assert points[2]["zscore"] == pytest.approx(20.0)
+
+    assert (await seeded_client.get("/features", params={"entity": "nobody"})).json()[
+        "points"
+    ] == []
+    assert (await seeded_client.get("/features")).status_code == 422
+
+
 async def test_health_reports_pipeline_task_states(client: httpx.AsyncClient) -> None:
     body = (await client.get("/health")).json()
     assert body["status"] == "ok"
@@ -98,6 +250,9 @@ async def test_openapi_documents_the_response_models(client: httpx.AsyncClient) 
         "AggregatesResponse",
         "TopEntitiesResponse",
         "JobsResponse",
+        "AnomaliesResponse",
+        "AnomalySummary",
+        "FeaturesResponse",
     } <= set(schema["components"]["schemas"])
 
 

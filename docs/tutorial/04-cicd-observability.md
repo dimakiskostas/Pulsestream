@@ -6,7 +6,7 @@
 > pipeline that tests, builds, scans and publishes the images and deploys a
 > tagged release.
 
-Branch: `phase-4-cicd-observability`, 10 commits on top of Phase 3. Steps
+Branch: `phase-4-cicd-observability`, 11 commits on top of Phase 3. Steps
 below are the commits in order (`git log --oneline main..phase-4-cicd-observability`
 once Phase 3 is merged).
 
@@ -196,6 +196,18 @@ The first run of the new workflow failed in "Set up job" of both image jobs:
 releases are tagged `v0.36.0`, and the runner resolves every action a job
 uses before its first step, so a wrong version fails the job without running
 anything. The `test` jobs were green; one character fixed the rest.
+
+### Step: *build: upgrade certifi, pillow and streamlit past the CVEs trivy found*
+
+The second run got past "Set up job" and failed on the scan itself: Trivy
+reported one critical fixable vulnerability in certifi 2026.7.22 and 28 in
+pillow 12.3.0, both transitive dependencies (Streamlit pulls pillow; nothing
+in PulseStream imports it). `uv lock --upgrade-package` moved certifi;
+pillow 13 was blocked by Streamlit 1.65's constraint and needed Streamlit
+1.66 with it. The image matrix no longer fails fast, so both scans are
+reported. This is the gate [ADR 0015](../decisions/0015-images-built-in-ci-released-by-tag.md)
+describes, working as intended: red without a code change, green with a lock
+update.
 
 ## Running it
 

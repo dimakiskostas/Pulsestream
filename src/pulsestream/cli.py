@@ -75,7 +75,13 @@ def build_parser() -> argparse.ArgumentParser:
 def cmd_api(args: argparse.Namespace) -> int:
     import uvicorn
 
-    uvicorn.run("pulsestream.api.app:app", host=args.host, port=args.port, reload=args.reload)
+    uvicorn.run(
+        "pulsestream.api.app:app",
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        log_config=None,  # keep the one logging configuration from configure_logging()
+    )
     return 0
 
 
@@ -168,5 +174,9 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
 
 
 def main(argv: list[str] | None = None) -> int:
+    from pulsestream.common.logging import configure_logging
+    from pulsestream.config import settings
+
+    configure_logging(settings.log_level, settings.log_format)
     args = build_parser().parse_args(argv)
     return COMMANDS[args.command](args)

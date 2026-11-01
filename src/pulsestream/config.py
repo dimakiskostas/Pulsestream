@@ -14,6 +14,10 @@ from pulsestream.sources.wikimedia import DEFAULT_USER_AGENT, STREAM_URL
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="PULSE_", env_file=".env", extra="ignore")
 
+    # --- logging -------------------------------------------------------------
+    log_level: str = "INFO"
+    log_format: Literal["console", "json"] = "console"  # json in containers
+
     # --- storage -------------------------------------------------------------
     db_path: str = "pulsestream.duckdb"
     lake_root: str = "data/raw"  # partitioned Parquet raw store (immutable, replayable)

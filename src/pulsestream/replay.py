@@ -1,10 +1,12 @@
-"""Rebuild a database from the lake: ``pulsestream replay``.
+"""Rebuild a database from the lake, or from the bus: ``pulsestream replay``.
 
 Why this exists: a changed filter, a new derived table, a corrupted DuckDB file,
 or simply "what did the stream look like between 10:00 and 10:30?" are all a
 replay, never a re-ingest (ADR 0008, 0009). The replay uses the live pipeline's
 consumer and processor; only the source differs, and the raw store is switched
-off so the lake is not written a second time.
+off so the lake is not written a second time. The source is the lake unless
+another ``EventSource`` is given; ``--from-bus`` passes the bus's recent window
+(ADR 0017), which the lake does not have yet when the processor was down.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from pulsestream.models import RawEvent
 from pulsestream.pipeline import run_consumer, run_producer
 from pulsestream.processing.detection import DetectionStage
 from pulsestream.processing.processor import StreamProcessor
+from pulsestream.sources.base import EventSource
 from pulsestream.sources.lake import ParquetSource
 from pulsestream.storage.aggregates import refresh_agg_minutely
 from pulsestream.storage.duck import connect
@@ -42,6 +45,7 @@ async def replay(
     until: datetime | None = None,
     batch_size: int = 500,
     cfg: Settings | None = None,
+    source: EventSource | None = None,
 ) -> ReplayReport:
     cfg = cfg if cfg is not None else default_settings
     con = connect(db_path)
@@ -49,7 +53,8 @@ async def replay(
         detection = DetectionStage.from_settings(cfg) if cfg.detection_enabled else None
         processor = StreamProcessor(con, None, detection)  # no raw store: a replay reads the lake
         queue: asyncio.Queue[RawEvent | None] = asyncio.Queue(maxsize=batch_size * 4)
-        source = ParquetSource(lake_root, since=since, until=until)
+        if source is None:
+            source = ParquetSource(lake_root, since=since, until=until)
         producer = asyncio.create_task(run_producer(source, queue))
         consumer = asyncio.create_task(run_consumer(queue, processor, batch_size, 60.0))
         await producer

@@ -27,6 +27,9 @@ def test_json_format_renders_structlog_and_stdlib_lines_alike() -> None:
     assert first["timestamp"].endswith("Z")
     assert second["event"] == "stdlib says hello" and second["level"] == "warning"
     assert second["logger"] == "uvicorn.error"
+    for line in lines:
+        internals = {key for key in line if key.startswith("_")}
+        assert not internals, f"formatter internals leaked into the output: {internals}"
 
 
 def test_level_filters_and_console_format_is_human_readable() -> None:

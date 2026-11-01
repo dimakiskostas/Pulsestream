@@ -26,7 +26,7 @@ from pulsestream.common import metrics
 from pulsestream.models import RawEvent
 from pulsestream.sources.base import EventSource
 
-BatchHandler = Callable[[list[RawEvent]], Awaitable[None]]
+BatchHandler = Callable[[list[RawEvent]], Awaitable[object]]  # the result is ignored
 
 
 @dataclass(frozen=True)

@@ -30,6 +30,7 @@ log = structlog.get_logger(__name__)
 
 SleepFn = Callable[[float], Awaitable[None]]
 MAX_SEQ = 18446744073709551615  # the largest sequence number an entry id can carry
+IDLE_PAUSE = 0.01  # seconds an idle subscriber waits after a read that returned nothing
 TRANSIENT = (redis_exceptions.ConnectionError, redis_exceptions.TimeoutError)
 
 
@@ -122,9 +123,14 @@ class RedisStreamsBus:
                         for delivery in await self._claim_stale(group, consumer):
                             yield delivery
                         last_claim = monotonic()
-                    for delivery in await self._read(group, consumer, ">", block=True):
+                    deliveries = await self._read(group, consumer, ">", block=True)
+                    for delivery in deliveries:
                         yield delivery
                     attempt = 0
+                    # An empty read waited block_ms on a real broker but returns at once on
+                    # a fake one; without a pause an idle consumer would spin the event loop
+                    # and starve the worker thread that writes the batches.
+                    await asyncio.sleep(IDLE_PAUSE if not deliveries else 0)
             except TRANSIENT as exc:
                 self.connected = False
                 metrics.ERRORS.labels(stage="bus").inc()

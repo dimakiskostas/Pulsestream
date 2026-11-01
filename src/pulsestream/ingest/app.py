@@ -19,6 +19,7 @@ from fastapi import FastAPI, Request, Response
 from pulsestream import __version__
 from pulsestream.api.schemas import IngestStats, LivenessStatus, ReadinessStatus
 from pulsestream.bus.base import EventBus
+from pulsestream.bus.monitor import keep_stats_fresh
 from pulsestream.common import metrics
 from pulsestream.config import Settings
 from pulsestream.config import settings as default_settings
@@ -45,6 +46,10 @@ def create_ingest_app(
             run_batches(queue, publisher.publish, cfg.batch_size, cfg.flush_interval),
             name="publisher",
         )
+        monitor = asyncio.create_task(
+            keep_stats_fresh(the_bus, cfg.bus_group, cfg.bus_stats_interval_seconds),
+            name="bus-monitor",
+        )
         app.state.started_at = datetime.now(UTC)
         app.state.source = src
         app.state.bus = the_bus
@@ -64,6 +69,8 @@ def create_ingest_app(
                 except TimeoutError:
                     publishing.cancel()
                     await asyncio.gather(publishing, return_exceptions=True)
+            monitor.cancel()
+            await asyncio.gather(monitor, return_exceptions=True)
             if bus is None:  # we built it, we close it
                 await the_bus.close()
 

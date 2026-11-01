@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     bus_read_count: int = 100  # entries per read
     bus_block_ms: int = 1000  # how long a read waits for new entries
     bus_claim_idle_seconds: int = 60  # take over another consumer's entries idle this long
+    bus_stats_interval_seconds: int = 15  # how often the bus gauges (length, pending, lag) refresh
 
     # --- detection: rolling features and statistical detectors ------------------
     detection_enabled: bool = True

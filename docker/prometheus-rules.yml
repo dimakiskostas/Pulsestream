@@ -1,0 +1,51 @@
+# Alert rules evaluated by the `monitoring` profile's Prometheus. They show up
+# on its Alerts page (http://localhost:9090/alerts); wiring an Alertmanager is
+# a deployment's choice.
+groups:
+  - name: pulsestream
+    rules:
+      - alert: PulseStreamTargetDown
+        expr: up{job="pulsestream-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The API is not answering /metrics"
+
+      - alert: PulseStreamNoEvents
+        expr: increase(pulsestream_ingest_events_total{stage="kept"}[5m]) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No validated events for 10 minutes (source down, or the pipeline stalled)"
+
+      - alert: PulseStreamLagHigh
+        expr: pulsestream_processing_lag_seconds > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Processing lag above 60 s for 5 minutes"
+
+      - alert: PulseStreamQueueNearFull
+        expr: pulsestream_queue_depth > 900
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue depth above 900 of 1000: backpressure is about to block the source"
+
+      - alert: PulseStreamErrors
+        expr: increase(pulsestream_errors_total[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.stage }} errors in the last 10 minutes"
+
+      - alert: PulseStreamJobFailing
+        expr: increase(pulsestream_job_runs_total{outcome="failed"}[30m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Maintenance job {{ $labels.job }} failed in the last 30 minutes"

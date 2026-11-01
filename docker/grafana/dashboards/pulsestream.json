@@ -1,0 +1,93 @@
+{
+  "uid": "pulsestream-ops",
+  "title": "PulseStream operations",
+  "tags": ["pulsestream"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Events per minute (kept vs raw)",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "rate(pulsestream_ingest_events_total{stage=\"kept\"}[1m]) * 60", "legendFormat": "kept"},
+        {"refId": "B", "expr": "rate(pulsestream_ingest_events_total{stage=\"raw\"}[1m]) * 60", "legendFormat": "raw"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Processing lag (s)",
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "pulsestream_processing_lag_seconds", "legendFormat": "lag"}],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Queue depth",
+      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "pulsestream_queue_depth"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 500}, {"color": "red", "value": 900}]}}, "overrides": []}
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Anomalies per hour, by severity",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum by (severity) (increase(pulsestream_anomalies_detected_total[1h]))", "legendFormat": "{{severity}}"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Errors per hour, by stage",
+      "gridPos": {"x": 12, "y": 8, "w": 6, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum by (stage) (increase(pulsestream_errors_total[1h]))", "legendFormat": "{{stage}}"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Batch processing time, p95 (s)",
+      "gridPos": {"x": 18, "y": 8, "w": 6, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(pulsestream_processing_duration_seconds_bucket[5m])))", "legendFormat": "p95"}],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Source reconnects (1h)",
+      "gridPos": {"x": 0, "y": 16, "w": 6, "h": 6},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "increase(pulsestream_source_reconnects_total[1h])"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 3}, {"color": "red", "value": 10}]}}, "overrides": []}
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Job runs (1h): ok / failed",
+      "gridPos": {"x": 6, "y": 16, "w": 6, "h": 6},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum(increase(pulsestream_job_runs_total{outcome=\"ok\"}[1h]))", "legendFormat": "ok"},
+        {"refId": "B", "expr": "sum(increase(pulsestream_job_runs_total{outcome=\"failed\"}[1h]))", "legendFormat": "failed"}
+      ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {}, "overrides": []}
+    }
+  ]
+}

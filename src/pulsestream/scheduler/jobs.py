@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 import duckdb
 import structlog
 
+from pulsestream.common import metrics
 from pulsestream.storage.aggregates import refresh_agg_minutely
 from pulsestream.storage.parquet import ParquetRawStore
 
@@ -81,10 +82,13 @@ class Maintenance:
         try:
             job.last_result = self._jobs[name]()
             job.last_error = None
+            metrics.JOB_RUNS.labels(job=name, outcome="ok").inc()
             log.info("job.ok", job=name, result=job.last_result)
         except Exception as exc:
             job.failures += 1
             job.last_error = f"{type(exc).__name__}: {exc}"
+            metrics.JOB_RUNS.labels(job=name, outcome="failed").inc()
+            metrics.ERRORS.labels(stage="job").inc()
             log.warning("job.failed", job=name, error=job.last_error)
         finally:
             job.last_duration_seconds = round(time.monotonic() - started, 3)

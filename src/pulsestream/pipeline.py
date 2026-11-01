@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from time import monotonic
 from typing import Protocol
 
+from pulsestream.common import metrics
 from pulsestream.models import RawEvent
 from pulsestream.sources.base import EventSource
 
@@ -75,6 +76,7 @@ async def run_consumer(
         except TimeoutError:
             await flush()
             continue
+        metrics.QUEUE_DEPTH.set(queue.qsize())
 
         try:
             if raw is None:  # sentinel -> flush & stop (used by tests and shutdown)

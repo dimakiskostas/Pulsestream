@@ -1,6 +1,7 @@
 """The ``pulsestream`` command: one front door for every service and tool.
 
     pulsestream api          serve the API; the ingestion pipeline runs inside it
+    pulsestream ingest       publish the source to the bus: the split ingestion service
     pulsestream capture      record live events to a JSONL fixture for replay
     pulsestream replay       rebuild a DuckDB file from the Parquet lake
     pulsestream dashboard    run the Streamlit dashboard against a running API
@@ -45,6 +46,13 @@ def build_parser() -> argparse.ArgumentParser:
     api.add_argument("--port", type=int, default=8000)
     api.add_argument("--reload", action="store_true", help="dev mode: restart on code changes")
 
+    ing = sub.add_parser(
+        "ingest",
+        help="publish the source to the bus (PULSE_BUS=redis); probes and /stats on --port",
+    )
+    ing.add_argument("--host", default="127.0.0.1")
+    ing.add_argument("--port", type=int, default=8001)
+
     cap = sub.add_parser("capture", help="record N live events to a JSONL fixture for replay")
     cap.add_argument("-n", "--count", type=int, default=500)
     cap.add_argument("-o", "--output", default="tests/fixtures/sample_events.jsonl")
@@ -82,6 +90,13 @@ def cmd_api(args: argparse.Namespace) -> int:
         reload=args.reload,
         log_config=None,  # keep the one logging configuration from configure_logging()
     )
+    return 0
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    uvicorn.run("pulsestream.ingest.app:app", host=args.host, port=args.port, log_config=None)
     return 0
 
 
@@ -165,6 +180,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
 
 COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "api": cmd_api,
+    "ingest": cmd_ingest,
     "capture": cmd_capture,
     "replay": cmd_replay,
     "dashboard": cmd_dashboard,

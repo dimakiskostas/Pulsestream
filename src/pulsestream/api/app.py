@@ -48,10 +48,9 @@ from pulsestream.processing.processor import StreamProcessor
 from pulsestream.scheduler.jobs import JOB_NAMES, Maintenance
 from pulsestream.scheduler.runner import build_scheduler
 from pulsestream.sources.base import EventSource
-from pulsestream.sources.fake import FakeSource, load_fixture
-from pulsestream.sources.wikimedia import WikimediaSource
 from pulsestream.storage.duck import aquery, connect, ensure_lake_view, lake_row_stats
 from pulsestream.storage.parquet import ParquetRawStore
+from pulsestream.wiring import build_source
 
 BUCKET_INTERVALS: dict[Bucket, str] = {
     "10s": "10 seconds",
@@ -59,13 +58,6 @@ BUCKET_INTERVALS: dict[Bucket, str] = {
     "5m": "5 minutes",
     "1h": "1 hour",
 }
-
-
-def build_source(cfg: Settings) -> EventSource:
-    """The one place that knows which concrete source is wired in (tutorial Part 1.1)."""
-    if cfg.source == "fake":
-        return FakeSource(load_fixture(cfg.fixture_path), delay=cfg.fixture_delay)
-    return WikimediaSource(cfg.stream_url, user_agent=cfg.user_agent, read_timeout=cfg.read_timeout)
 
 
 def _task_state(task: asyncio.Task[None]) -> TaskState:

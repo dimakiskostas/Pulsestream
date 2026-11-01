@@ -25,6 +25,7 @@ import structlog
 from httpx_sse import aconnect_sse
 
 from pulsestream import __version__
+from pulsestream.common import metrics
 from pulsestream.models import RawEvent
 
 STREAM_URL = "https://stream.wikimedia.org/v2/stream/recentchange"
@@ -98,6 +99,7 @@ class WikimediaSource:
         self._sleep = sleep
         self._rng = rng
         self.last_event_id: str | None = None
+        self.connected = False  # true while a stream is open and delivering
 
     def _default_client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(timeout=self._timeout)
@@ -124,6 +126,7 @@ class WikimediaSource:
                             body = (await source.response.aread())[:200]
                             raise SourceFatalError(f"HTTP {status} from {self._url}: {body!r}")
                         log.info("source.connected", url=self._url, resume_from=self.last_event_id)
+                        self.connected = True
                         async for sse in source.aiter_sse():
                             if sse.id:
                                 self.last_event_id = sse.id
@@ -141,10 +144,14 @@ class WikimediaSource:
                 reason = "stream ended"
             except _Transient as exc:
                 reason, retry_after = str(exc), exc.retry_after
+                metrics.ERRORS.labels(stage="source").inc()
             except httpx.RequestError as exc:  # timeouts, drops, protocol errors, SSEError
                 reason = f"{type(exc).__name__}: {exc}"
+                metrics.ERRORS.labels(stage="source").inc()
 
+            self.connected = False
             attempt += 1
+            metrics.SOURCE_RECONNECTS.inc()
             if self._max_attempts is not None and attempt > self._max_attempts:
                 raise SourceFatalError(f"giving up after {attempt - 1} reconnects: {reason}")
             # First retry waits ~base (1 s), then 2 s, 4 s, ... capped: attempt is 1-based here.

@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import duckdb
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 
 from pulsestream import __version__
 from pulsestream.api.schemas import (
@@ -36,6 +36,7 @@ from pulsestream.api.schemas import (
     TimeseriesResponse,
     TopEntitiesResponse,
 )
+from pulsestream.common import metrics
 from pulsestream.config import Settings
 from pulsestream.config import settings as default_settings
 from pulsestream.models import Metric, RawEvent, Severity
@@ -141,6 +142,12 @@ def create_app(cfg: Settings | None = None, source: EventSource | None = None) -
         )
         degraded = pipeline.consumer == "failed"
         return HealthStatus(status="degraded" if degraded else "ok", pipeline=pipeline)
+
+    @app.get("/metrics", include_in_schema=False)
+    async def prometheus_metrics() -> Response:
+        """Prometheus text exposition of every pulsestream_* series."""
+        body, content_type = metrics.render()
+        return Response(content=body, media_type=content_type)
 
     @app.get("/stats/latest", response_model=StatsLatest)
     async def stats_latest(request: Request) -> StatsLatest:

@@ -51,7 +51,7 @@ def test_a_huge_edit_is_flagged_against_the_median() -> None:
 
 
 def test_removals_are_scored_by_size_with_a_negative_sign() -> None:
-    detector = ByteDeltaDetector(window=200, warmup=50)
+    detector = ByteDeltaDetector(window=200, warmup=50, min_bytes=1000)
     for e in typical(60):
         detector.observe(e)
     anomaly = detector.observe(edit(-8_000, 60))
@@ -73,7 +73,7 @@ def test_identical_sizes_give_no_score_rather_than_infinity() -> None:
 
 
 def test_entities_are_independent_and_history_is_bounded() -> None:
-    detector = ByteDeltaDetector(window=60, warmup=50)
+    detector = ByteDeltaDetector(window=60, warmup=50, min_bytes=1000)
     for e in typical(60, "enwiki"):
         detector.observe(e)
     assert detector.entities() == 1
@@ -84,6 +84,28 @@ def test_entities_are_independent_and_history_is_bounded() -> None:
         detector.observe(e)
     assert detector.observe(edit(5_000, 61, "dewiki")) is not None
     assert len(detector._history["dewiki"]) == 60, "bounded by window"
+
+
+def test_severity_tiers_follow_the_size_floor() -> None:
+    detector = ByteDeltaDetector(window=200, warmup=50, min_bytes=1000)
+    for e in typical(60):
+        detector.observe(e)
+    sizes = {1_000: "warn", 2_499: "warn", 2_500: "high", 4_999: "high", 5_000: "critical"}
+    for i, (size, expected) in enumerate(sizes.items()):
+        anomaly = ByteDeltaDetector(window=200, warmup=50, min_bytes=1000)
+        for e in typical(60):
+            anomaly.observe(e)
+        found = anomaly.observe(edit(size, 100 + i))
+        assert found is not None and found.severity == expected, (size, expected)
+
+
+def test_defaults_are_calibrated_for_large_edits() -> None:
+    detector = ByteDeltaDetector()
+    for e in typical(60):
+        detector.observe(e)
+    assert detector.observe(edit(8_000, 60)) is None, "an 8 KB edit is routine on big wikis"
+    big = detector.observe(edit(60_000, 61))
+    assert big is not None and big.severity == "warn"
 
 
 def test_configuration_is_validated() -> None:

@@ -4,7 +4,11 @@ Per entity, the last ``window`` absolute byte deltas form the reference. A new
 edit's |delta| is scored with the modified z-score (median and MAD), which a few
 huge edits cannot drag around the way a mean and standard deviation can. Guards:
 warm-up, no score when the MAD is zero (recent edits all the same size), and a
-minimum size in bytes so a 40-byte edit on a wiki of 10-byte edits is not a finding.
+minimum size in bytes, because "far larger than this wiki's usual edit" is routine
+on wikis whose usual edit is tiny. The defaults (50 000 bytes, modified z above 8)
+were calibrated on a live run: with 1 000 bytes and 3.5 the detector raised 1 500
+findings in 13 minutes, almost all ordinary file-page edits on Commons. Severity
+follows the size: warn from the floor, high from 2.5x, critical from 5x.
 """
 
 from __future__ import annotations
@@ -13,10 +17,19 @@ from collections import deque
 from datetime import datetime, timedelta
 
 from pulsestream.detection.features import median_abs_deviation, modified_zscore
-from pulsestream.models import Anomaly, Method, Metric, WikiEvent, anomaly_id, severity_for
+from pulsestream.models import Anomaly, Method, Metric, Severity, WikiEvent, anomaly_id
 
 METHOD: Method = "mad_zscore"
 METRIC: Metric = "byte_delta"
+
+
+def severity_for_size(magnitude: float, min_bytes: int) -> Severity:
+    """Tiers by size relative to the floor: the floor is a warning, 2.5x high, 5x critical."""
+    if magnitude >= 5 * min_bytes:
+        return "critical"
+    if magnitude >= 2.5 * min_bytes:
+        return "high"
+    return "warn"
 
 
 class ByteDeltaDetector:
@@ -25,8 +38,8 @@ class ByteDeltaDetector:
         *,
         window: int = 200,
         warmup: int = 50,
-        threshold: float = 3.5,
-        min_bytes: int = 1000,
+        threshold: float = 8.0,
+        min_bytes: int = 50_000,
     ) -> None:
         if window < 2 or warmup < 2 or warmup > window or threshold <= 0:
             raise ValueError("window >= warmup >= 2 and threshold > 0")
@@ -58,7 +71,7 @@ class ByteDeltaDetector:
                     expected=median,
                     score=signed,
                     method=METHOD,
-                    severity=severity_for(score),
+                    severity=severity_for_size(magnitude, self._min_bytes),
                     window_start=minute,
                     window_end=minute + timedelta(minutes=1),
                     event_id=event.event_id,

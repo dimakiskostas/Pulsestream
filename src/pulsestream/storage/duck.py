@@ -14,8 +14,43 @@ from typing import Any
 
 import duckdb
 
-from pulsestream.models import WikiEvent
+from pulsestream.models import Anomaly, FeatureSnapshot, WikiEvent
 from pulsestream.storage.aggregates import init_aggregates
+
+FEATURES_DDL = """
+CREATE TABLE IF NOT EXISTS features_rolling (
+    entity       VARCHAR     NOT NULL,
+    window_start TIMESTAMPTZ NOT NULL,
+    window_end   TIMESTAMPTZ NOT NULL,
+    count        INTEGER     NOT NULL,
+    rate_per_min DOUBLE      NOT NULL,
+    ewma         DOUBLE,
+    mean         DOUBLE,
+    std          DOUBLE,
+    zscore       DOUBLE,
+    is_anomaly   BOOLEAN     NOT NULL DEFAULT false,
+    PRIMARY KEY (entity, window_start)
+)
+"""
+
+ANOMALIES_DDL = """
+CREATE TABLE IF NOT EXISTS anomalies (
+    anomaly_id    UUID        PRIMARY KEY,
+    detected_at   TIMESTAMPTZ NOT NULL,
+    entity        VARCHAR     NOT NULL,
+    metric        VARCHAR     NOT NULL,
+    value         DOUBLE      NOT NULL,
+    expected      DOUBLE,
+    score         DOUBLE      NOT NULL,
+    method        VARCHAR     NOT NULL,
+    severity      VARCHAR     NOT NULL,
+    window_start  TIMESTAMPTZ NOT NULL,
+    window_end    TIMESTAMPTZ NOT NULL,
+    event_id      VARCHAR,
+    model_version VARCHAR,
+    details       VARCHAR
+)
+"""
 
 
 def init_db(conn: duckdb.DuckDBPyConnection) -> None:
@@ -34,6 +69,8 @@ def init_db(conn: duckdb.DuckDBPyConnection) -> None:
         )
         """
     )
+    conn.execute(FEATURES_DDL)
+    conn.execute(ANOMALIES_DDL)
     init_aggregates(conn)
 
 
@@ -111,6 +148,59 @@ def lake_row_stats(
         return 0, None, None
     count, first, last = row
     return int(count), first, last
+
+
+def write_features(con: duckdb.DuckDBPyConnection, snapshots: list[FeatureSnapshot]) -> None:
+    """Upsert closed-window features; a replay recomputes the same windows and replaces them."""
+    if not snapshots:
+        return
+    con.executemany(
+        "INSERT OR REPLACE INTO features_rolling VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                s.entity,
+                s.window_start,
+                s.window_end,
+                s.count,
+                s.rate_per_min,
+                s.ewma,
+                s.mean,
+                s.std,
+                s.zscore,
+                s.is_anomaly,
+            )
+            for s in snapshots
+        ],
+    )
+
+
+def write_anomalies(con: duckdb.DuckDBPyConnection, anomalies: list[Anomaly]) -> None:
+    """Insert findings; ids are deterministic, so a replayed finding is skipped, not doubled."""
+    if not anomalies:
+        return
+    con.executemany(
+        "INSERT INTO anomalies VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (anomaly_id) DO NOTHING",
+        [
+            (
+                a.anomaly_id,
+                a.detected_at,
+                a.entity,
+                a.metric,
+                a.value,
+                a.expected,
+                a.score,
+                a.method,
+                a.severity,
+                a.window_start,
+                a.window_end,
+                a.event_id,
+                a.model_version,
+                a.details,
+            )
+            for a in anomalies
+        ],
+    )
 
 
 def write_batch(con: duckdb.DuckDBPyConnection, batch: list[WikiEvent]) -> None:

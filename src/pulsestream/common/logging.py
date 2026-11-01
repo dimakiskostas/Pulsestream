@@ -54,7 +54,12 @@ def configure_logging(
     )
     handler = logging.StreamHandler(stream if stream is not None else sys.stderr)
     handler.setFormatter(
-        structlog.stdlib.ProcessorFormatter(foreign_pre_chain=shared, processors=[renderer])
+        structlog.stdlib.ProcessorFormatter(
+            foreign_pre_chain=shared,
+            # remove_processors_meta drops the keys the formatter adds to carry a stdlib
+            # record through the chain (_record, _from_structlog) before rendering.
+            processors=[structlog.stdlib.ProcessorFormatter.remove_processors_meta, renderer],
+        )
     )
     root = logging.getLogger()
     root.handlers[:] = [handler]

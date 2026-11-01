@@ -47,6 +47,7 @@ class EwmaBandDetector:
         min_std: float = 1.0,
         min_abs: float = 5.0,
         detect_drops: bool = True,
+        winsorize: bool = True,
     ) -> None:
         if warmup < 2 or k <= 0 or min_std <= 0 or min_abs < 0:
             raise ValueError("warmup >= 2, k > 0, min_std > 0, min_abs >= 0")
@@ -57,6 +58,7 @@ class EwmaBandDetector:
         self._min_std = min_std
         self._min_abs = min_abs
         self._detect_drops = detect_drops
+        self._winsorize = winsorize
         self._states: dict[str, _State] = {}
 
     def _state_for(self, window: ClosedWindow) -> _State:
@@ -110,7 +112,8 @@ class EwmaBandDetector:
                     ),
                 )
                 state.anomalies += 1
-                update = clip(value, lower, upper)  # winsorise: keep the band honest
+                if self._winsorize:
+                    update = clip(value, lower, upper)  # keep the band honest
 
         state.ewma = ewma_update(state.ewma, update, self._alpha)
         state.stats.push(update)

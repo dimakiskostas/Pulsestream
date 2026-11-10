@@ -1,7 +1,6 @@
 """Wikimedia EventStreams source: SSE over httpx with reconnect, resume and backoff.
 
-The read loop is the part people fumble (tutorial Part 1.3). The engineering lives
-around it:
+The read loop is the easy part. The engineering lives around it:
 
 * **Identify yourself.** Wikimedia's User-Agent policy applies to EventStreams; a
   generic client UA (``python-httpx/...``) is answered with HTTP 403 by the edge.

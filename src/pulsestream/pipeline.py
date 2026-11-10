@@ -13,7 +13,7 @@ which hands batches to the bus.
 
 Processing is synchronous work (DuckDB, Parquet) and runs in a worker thread via
 ``asyncio.to_thread``, so a slow batch never stalls the event loop that serves the
-API and reads the stream (tutorial Part 1.5 gotcha: don't block the loop).
+API and reads the stream (never block the loop).
 """
 
 import asyncio

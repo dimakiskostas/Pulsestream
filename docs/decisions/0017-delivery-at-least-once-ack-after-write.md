@@ -7,8 +7,8 @@ the split pipeline.
 
 ## Context
 
-The tutorial's Phase 5 gotcha is "decide your delivery semantics explicitly",
-and the HLD's D2 and non-goals rule out exactly-once. With a broker between
+The delivery semantics have to be decided explicitly, and the HLD's D2 and
+non-goals rule out exactly-once. With a broker between
 two services the failure points multiply: the ingest service can die with
 events in its queue, the broker can be away, the processor can die between
 reading a batch and writing it, and an acknowledgement can fail after the

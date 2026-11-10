@@ -9,9 +9,8 @@ Accepted (Phase 1).
 The HLD (D4, §7 `DECIDE: micro-batch cadence`) prefers micro-batches over
 per-event writes: columnar stores and Parquet files pay a fixed cost per
 write, so one row per write destroys throughput and, in Phase 2, produces
-thousands of tiny Parquet files. The tutorial's first consumer flushed only
-when the batch was full, which means a quiet stream could hold events in
-memory indefinitely.
+thousands of tiny Parquet files. A consumer that flushes only when the batch
+is full lets a quiet stream hold events in memory indefinitely.
 
 ## Decision
 

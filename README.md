@@ -8,9 +8,8 @@ Live edits from every Wikimedia project stream in over SSE, are validated into
 typed events, land in DuckDB in micro-batches and in a partitioned Parquet lake,
 and are served by a typed FastAPI API and a Streamlit dashboard. A statistical
 anomaly detector, Prometheus metrics, Docker/CI/CD and a broker-based split were
-added phase by phase. The design is in [`docs/hld.pdf`](docs/hld.pdf); the build is
-written up as a tutorial in [`docs/tutorial/`](docs/tutorial/README.md), one git
-branch per phase.
+added phase by phase, one git branch per phase. The design is in
+[`docs/hld.pdf`](docs/hld.pdf).
 
 ## How it works
 
@@ -202,8 +201,7 @@ docker/               Dockerfile (targets api, dashboard, ingest), Prometheus co
 docker-compose.yml    redis + ingest + api + dashboard; --profile monitoring adds Prometheus and Grafana
 .github/workflows/    ci.yml: test matrix, image build + scan + push, deploy on v* tags
 docs/
-  hld.pdf, tutorial.pdf      the design and the guided tutorial the build follows
-  tutorial/                  the worked tutorial for this repository, one chapter per phase
+  hld.pdf                    the design
   decisions/                 architecture decision records (ADR 0001-0017)
   operations.md              runbook: run with Docker, what to watch, release and deploy
 ```

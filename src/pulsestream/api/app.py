@@ -1,6 +1,6 @@
 """FastAPI application: the lifespan owns the pipeline and the DuckDB connection.
 
-Tutorial Part 1.6. ``create_app`` is a factory so tests can inject settings, a
+``create_app`` is a factory so tests can inject settings, a
 replay source or a bus; the module-level ``app`` is what uvicorn serves
 (``pulsestream api`` -> ``uvicorn pulsestream.api.app:app``).
 
@@ -276,7 +276,7 @@ def create_app(
         bucket: Bucket = "10s",
         minutes: int = Query(default=10, ge=1, le=7 * 24 * 60),
     ) -> TimeseriesResponse:
-        """Per-bucket event counts over the last ``minutes`` minutes (tutorial 1.6, your turn)."""
+        """Per-bucket event counts over the last ``minutes`` minutes."""
         interval = BUCKET_INTERVALS[bucket]  # allow-listed literal, never user text in SQL
         rows = await aquery(
             request.app.state.con,

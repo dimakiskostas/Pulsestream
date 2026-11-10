@@ -10,7 +10,7 @@ Phase 0's workflow ran lint, types and tests. Phase 4 adds two images and a
 deploy, which raises the questions of where images are built, which commits
 produce a published image, what gates a publish, and what triggers a deploy.
 The project is reviewed as one pull request per phase and squash-merged to
-`main` (tutorial README), so `main` is always a reviewed state.
+`main`, so `main` is always a reviewed state.
 
 ## Decision
 

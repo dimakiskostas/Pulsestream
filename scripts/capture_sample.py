@@ -1,9 +1,9 @@
-"""Capture a replayable sample from the live Wikimedia stream (tutorial Part 2.1).
+"""Capture a replayable sample from the live Wikimedia stream.
 
     uv run python scripts/capture_sample.py [COUNT] [PATH]
 
-Equivalent to ``uv run pulsestream capture -n COUNT -o PATH``; kept so the
-tutorial's command works verbatim.
+Equivalent to ``uv run pulsestream capture -n COUNT -o PATH``, kept as a
+standalone script.
 """
 
 import asyncio

@@ -1,6 +1,6 @@
 """FakeSource -> queue -> consumer -> DuckDB against the committed replay fixture.
 
-Tutorial Part 2.3. The fixture is ~20 s of the live recentchange stream captured on
+The fixture is ~20 s of the live recentchange stream captured on
 2026-10-11 with `pulsestream capture -n 500`. Its composition is pinned below so a
 change in the filter (ADR 0001) or a silently truncated fixture fails loudly.
 """

@@ -79,4 +79,4 @@ produces and the evaluation harness this phase builds. Stretch goal S1.
 - Winsorising has a price: a run of clipped spikes still lifts the EWMA by up
   to k·std per window, so for a few minutes after the run the band sits high
   and a normal minute can register as a drop. The minimum absolute deviation
-  limits how often; the trace in chapter 03 shows one such drop finding.
+  limits how often; the Phase 3 live trace showed one such drop finding.

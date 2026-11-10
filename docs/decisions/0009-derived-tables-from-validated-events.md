@@ -6,7 +6,7 @@ Accepted (Phase 2).
 
 ## Context
 
-The tutorial suggests building `agg_minutely` directly over the Parquet lake
+The obvious option is to build `agg_minutely` directly over the Parquet lake
 with `read_parquet(...)`. The lake, however, holds the raw envelope: the
 payload is a JSON string, and the rules that turn it into a domain event
 (which types to keep, how to derive `byte_delta`, what the entity is, ADR 0001)

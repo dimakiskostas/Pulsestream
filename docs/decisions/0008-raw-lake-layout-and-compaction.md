@@ -8,8 +8,8 @@ Accepted (Phase 2).
 
 The HLD (§7, D4) wants raw events appended to partitioned Parquet as the
 immutable source of truth, written in micro-batches, with a scheduled job that
-compacts small files. The tutorial's gotcha is blunt: one Parquet file per
-event destroys read performance. Three things had to be decided: the
+compacts small files. One Parquet file per event destroys read performance.
+Three things had to be decided: the
 partition key, the file granularity, and how compaction stays safe while a
 writer keeps adding files.
 
